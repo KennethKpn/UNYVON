@@ -161,7 +161,11 @@ export default function SalesPage() {
       return;
     }
     setCart((prev) =>
-      prev.map((i) => (i.productId === productId ? { ...i, quantity: qty } : i))
+      prev.map((i) => {
+        if (i.productId !== productId) return i;
+        const clamped = Math.min(qty, i.stock);
+        return { ...i, quantity: clamped };
+      })
     );
   };
 
@@ -187,16 +191,22 @@ export default function SalesPage() {
       const sale = await createSale(input);
 
       if (status === "confirmed") {
-        await confirmSale(sale.id);
+        try {
+          await confirmSale(sale.id);
 
-        // Record initial payment if specified
-        const initPay = parseFloat(initialPaymentAmount) || 0;
-        if (initPay > 0) {
-          await createPayment({
-            sale_id: sale.id,
-            amount: initPay,
-            payment_method: initialPaymentMethod,
-          });
+          // Record initial payment if specified
+          const initPay = parseFloat(initialPaymentAmount) || 0;
+          if (initPay > 0) {
+            await createPayment({
+              sale_id: sale.id,
+              amount: initPay,
+              payment_method: initialPaymentMethod,
+            });
+          }
+        } catch (confirmErr) {
+          // Clean up orphan draft on confirm failure
+          try { await cancelSale(sale.id); } catch { /* best effort */ }
+          throw confirmErr;
         }
       }
 
@@ -207,7 +217,12 @@ export default function SalesPage() {
       setInitialPaymentMethod("cash");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur création vente");
+      const msg = err instanceof Error ? err.message : "Erreur création vente";
+      // Translate UUID-based error to user-friendly message
+      const friendly = msg.includes("Stock insuffisant")
+        ? "Stock insuffisant pour un ou plusieurs produits. Veuillez réduire les quantités."
+        : msg;
+      setError(friendly);
     } finally {
       setActionLoading(null);
     }
@@ -219,7 +234,11 @@ export default function SalesPage() {
       await confirmSale(saleId);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur confirmation");
+      const msg = err instanceof Error ? err.message : "Erreur confirmation";
+      const friendly = msg.includes("Stock insuffisant")
+        ? "Stock insuffisant pour un ou plusieurs produits."
+        : msg;
+      setError(friendly);
     } finally {
       setActionLoading(null);
     }
@@ -471,10 +490,15 @@ export default function SalesPage() {
 
       {/* New Sale Modal */}
       {showNewSale && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-3xl max-h-[90vh] overflow-y-auto">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-6">
+        <div
+          className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Nouvelle vente"
+        >
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-3xl max-h-[90vh] flex flex-col">
+              <div className="shrink-0 p-6 border-b border-border flex items-center justify-between">
                 <h2 className="font-display text-lg font-bold text-ink">Nouvelle vente</h2>
                 <Button
                   variant="ghost"
@@ -490,7 +514,7 @@ export default function SalesPage() {
                 </Button>
               </div>
 
-              <div className="space-y-4">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
                 <div>
                   <label className="text-sm font-medium text-ink">Client (optionnel)</label>
                   <select
@@ -558,7 +582,10 @@ export default function SalesPage() {
                           <tr key={item.productId} className="border-b border-border last:border-0">
                             <td className="px-3 py-2">
                               <p className="text-sm font-medium text-ink">{item.productName}</p>
-                              <p className="text-xs text-muted">Stock: {item.stock} {item.unit}</p>
+                              <p className={`text-xs ${item.quantity >= item.stock ? "text-error font-medium" : "text-muted"}`}>
+                                Stock: {item.stock} {item.unit}
+                                {item.quantity >= item.stock && " — max"}
+                              </p>
                             </td>
                             <td className="px-3 py-2 text-right">
                               <input
@@ -567,7 +594,11 @@ export default function SalesPage() {
                                 max={item.stock}
                                 value={item.quantity}
                                 onChange={(e) => updateCartQuantity(item.productId, parseInt(e.target.value) || 0)}
-                                className="w-16 text-right px-2 py-1 border border-border rounded text-sm"
+                                className={`w-16 text-right px-2 py-1 border rounded text-sm ${
+                                  item.quantity >= item.stock
+                                    ? "border-amber-400 bg-amber-50 text-amber-800"
+                                    : "border-border"
+                                }`}
                               />
                             </td>
                             <td className="px-3 py-2 text-right">
@@ -641,7 +672,7 @@ export default function SalesPage() {
                   </div>
                 )}
 
-                <div className="flex gap-3 pt-4">
+                <div className="shrink-0 flex gap-3 pt-4 border-t border-border">
                   <Button
                     variant="outline"
                     onClick={() => handleCreateSale("draft")}
@@ -661,24 +692,29 @@ export default function SalesPage() {
                   </Button>
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
 
       {/* Payment Modal */}
       {payForSale && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-md">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-6">
+        <div
+          className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Enregistrer un paiement"
+        >
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md max-h-[90vh] flex flex-col">
+              <div className="shrink-0 p-6 border-b border-border flex items-center justify-between">
                 <h2 className="font-display text-lg font-bold text-ink">Enregistrer un paiement</h2>
                 <Button variant="ghost" size="sm" onClick={() => setPayForSale(null)}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
 
-              <div className="space-y-4">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
                 <div className="bg-muted/30 rounded-lg p-3">
                   <p className="text-sm text-muted">Vente</p>
                   <p className="font-medium text-ink">
@@ -724,17 +760,19 @@ export default function SalesPage() {
                   />
                 </div>
 
-                <Button
-                  onClick={handleRecordPayment}
-                  disabled={!paymentAmount || paymentLoading}
-                  className="w-full"
-                >
-                  {paymentLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                  Enregistrer le paiement
-                </Button>
+                <div className="shrink-0 pt-2">
+                  <Button
+                    onClick={handleRecordPayment}
+                    disabled={!paymentAmount || paymentLoading}
+                    className="w-full"
+                  >
+                    {paymentLoading && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
+                    Enregistrer le paiement
+                  </Button>
+                </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -315,13 +315,14 @@ function ExpenseModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label={expense ? "Modifier la dépense" : "Nouvelle dépense"}
     >
-      <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md">
-        <div className="p-6 border-b border-border flex items-start justify-between">
+      <div className="min-h-full flex items-center justify-center p-4">
+        <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md max-h-[90vh] flex flex-col">
+        <div className="shrink-0 p-6 border-b border-border flex items-start justify-between">
           <div>
             <h2 className="font-display font-semibold text-lg text-ink">
               {expense ? "Modifier la dépense" : "Nouvelle dépense"}
@@ -337,7 +338,7 @@ function ExpenseModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
           <div>
             <label htmlFor="exp-category" className="text-sm font-medium text-text block mb-1.5">
               Catégorie
@@ -428,7 +429,7 @@ function ExpenseModal({
           </div>
         </div>
 
-        <div className="p-6 border-t border-border flex justify-end gap-3">
+        <div className="shrink-0 p-6 border-t border-border flex justify-end gap-3">
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Annuler
           </Button>
@@ -442,6 +443,7 @@ function ExpenseModal({
             )}
           </Button>
         </div>
+      </div>
       </div>
     </div>
   );

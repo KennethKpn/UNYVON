@@ -182,40 +182,42 @@ export default function TeamPage() {
 
       {showInvite && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-label="Inviter un membre"
         >
-          <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md">
-            <div className="p-6 border-b border-border flex items-start justify-between">
-              <div>
-                <h2 className="font-display font-semibold text-lg text-ink">
-                  Inviter un membre
-                </h2>
-                <p className="text-sm text-muted mt-1">
-                  Envoyer une invitation par e-mail
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md">
+              <div className="shrink-0 p-6 border-b border-border flex items-start justify-between">
+                <div>
+                  <h2 className="font-display font-semibold text-lg text-ink">
+                    Inviter un membre
+                  </h2>
+                  <p className="text-sm text-muted mt-1">
+                    Envoyer une invitation par e-mail
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowInvite(false)}
+                  aria-label="Fermer"
+                  className="p-2 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 space-y-4">
+                <p className="text-sm text-muted">
+                  Les invitations d&apos;équipe seront bientôt disponibles.
                 </p>
               </div>
-              <button
-                onClick={() => setShowInvite(false)}
-                aria-label="Fermer"
-                className="p-2 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-muted">
-                Les invitations d&apos;équipe seront bientôt disponibles.
-              </p>
-            </div>
-
-            <div className="p-6 border-t border-border flex justify-end gap-3">
-              <Button onClick={() => setShowInvite(false)}>
-                Fermer
-              </Button>
+              <div className="shrink-0 p-6 border-t border-border flex justify-end gap-3">
+                <Button onClick={() => setShowInvite(false)}>
+                  Fermer
+                </Button>
+              </div>
             </div>
           </div>
         </div>

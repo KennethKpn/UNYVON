@@ -191,33 +191,35 @@ export default function CategoriesPage() {
 
       {deleteTarget && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4"
+          className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
           role="dialog"
           aria-modal="true"
           aria-label="Supprimer une catégorie"
         >
-          <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-sm">
-            <div className="p-6">
-              <h2 className="font-display font-semibold text-lg text-ink">
-                Supprimer la catégorie ?
-              </h2>
-              <p className="text-sm text-muted mt-1">
-                « {deleteTarget.name} » sera supprimée. Les produits qui utilisent cette catégorie la perdront (sans être supprimés).
-              </p>
-            </div>
-            <div className="p-6 pt-0 flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
-                Annuler
-              </Button>
-              <Button
-                variant="outline"
-                className="bg-error/10 text-error border-error/20 hover:bg-error/15"
-                onClick={handleDelete}
-                disabled={deleting}
-              >
-                {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Supprimer
-              </Button>
+          <div className="min-h-full flex items-center justify-center p-4">
+            <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-sm">
+              <div className="p-6">
+                <h2 className="font-display font-semibold text-lg text-ink">
+                  Supprimer la catégorie ?
+                </h2>
+                <p className="text-sm text-muted mt-1">
+                  « {deleteTarget.name} » sera supprimée. Les produits qui utilisent cette catégorie la perdront (sans être supprimés).
+                </p>
+              </div>
+              <div className="p-6 pt-0 flex justify-end gap-3">
+                <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                  Annuler
+                </Button>
+                <Button
+                  variant="outline"
+                  className="bg-error/10 text-error border-error/20 hover:bg-error/15"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                >
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Supprimer
+                </Button>
+              </div>
             </div>
           </div>
         </div>
@@ -256,13 +258,14 @@ function CategoryModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label={category ? "Renommer la catégorie" : "Nouvelle catégorie"}
     >
-      <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md">
-        <div className="p-6 border-b border-border flex items-start justify-between">
+      <div className="min-h-full flex items-center justify-center p-4">
+        <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-md">
+        <div className="shrink-0 p-6 border-b border-border flex items-start justify-between">
           <div>
             <h2 className="font-display font-semibold text-lg text-ink">
               {category ? "Renommer la catégorie" : "Nouvelle catégorie"}
@@ -305,7 +308,7 @@ function CategoryModal({
           )}
         </div>
 
-        <div className="p-6 border-t border-border flex justify-end gap-3">
+        <div className="shrink-0 p-6 border-t border-border flex justify-end gap-3">
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Annuler
           </Button>
@@ -314,6 +317,7 @@ function CategoryModal({
             {category ? "Enregistrer" : "Créer"}
           </Button>
         </div>
+      </div>
       </div>
     </div>
   );
