@@ -14,6 +14,8 @@ const PROTECTED_PREFIXES = [
   "team",
   "billing",
   "onboarding",
+  "suppliers",
+  "categories",
 ];
 
 export async function proxy(request: NextRequest) {

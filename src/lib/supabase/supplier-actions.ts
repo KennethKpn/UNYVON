@@ -11,6 +11,7 @@ import type {
 // ---------------------------------------------------------------------------
 // Helpers : snake_case ↔ camelCase
 // ---------------------------------------------------------------------------
+import { normalizePhone } from "@/lib/utils/phone";
 
 function toSupplier(row: DatabaseSupplier): Supplier {
   return {
@@ -81,6 +82,31 @@ export async function getSuppliers(): Promise<Supplier[]> {
   }
 
   return (data as DatabaseSupplier[]).map(toSupplier);
+}
+
+/**
+ * Fournisseurs de l'organisation partageant un numéro normalisé identique.
+ * Simple AVERTISSEMENT : pas de contrainte d'unicité, la décision finale
+ * appartient à l'utilisateur.
+ */
+export async function findSupplierPhoneMatches(
+  phone: string,
+  excludeId?: string
+): Promise<Supplier[]> {
+  const normalized = normalizePhone(phone);
+  if (normalized.length < 3) return [];
+
+  const supabase = await createServerSupabase();
+  const { data, error } = await supabase
+    .from("suppliers")
+    .select("*")
+    .neq("phone", null)
+    .neq("id", excludeId ?? "");
+
+  if (error) return [];
+  return (data as DatabaseSupplier[])
+    .map(toSupplier)
+    .filter((s) => normalizePhone(s.phone) === normalized);
 }
 
 export async function getSupplier(id: string): Promise<Supplier | null> {

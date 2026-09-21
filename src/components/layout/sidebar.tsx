@@ -10,6 +10,7 @@ import {
   Warehouse,
   Truck,
   Users,
+  Handshake,
   Receipt,
   Sparkles,
   UserCog,
@@ -38,6 +39,7 @@ const navItems: NavItem[] = [
   { href: "/inventory", label: "Stock", icon: Warehouse, permission: "canManageInventory" },
   { href: "/purchases", label: "Achats", icon: Truck, permission: "canManageInventory" },
   { href: "/customers", label: "Clients", icon: Users, permission: "canManageCustomers" },
+  { href: "/suppliers", label: "Fournisseurs", icon: Handshake, permission: "canManageSuppliers" },
   { href: "/expenses", label: "Dépenses", icon: Receipt, permission: "canManageOrganization" },
 ];
 

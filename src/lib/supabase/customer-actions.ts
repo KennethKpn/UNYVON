@@ -11,6 +11,7 @@ import type {
 // ---------------------------------------------------------------------------
 // Helpers : snake_case ↔ camelCase
 // ---------------------------------------------------------------------------
+import { normalizePhone } from "@/lib/utils/phone";
 
 function toCustomer(row: DatabaseCustomer, balance?: { totalPurchases: number; outstanding: number }): Customer {
   return {
@@ -120,6 +121,31 @@ export async function getCustomers(): Promise<Customer[]> {
   }
 
   return customers.map((c) => toCustomer(c, balances.get(c.id)));
+}
+
+/**
+ * Clients de l'organisation partageant un numéro normalisé identique.
+ * Simple AVERTISSEMENT : pas de contrainte d'unicité, la décision finale
+ * appartient à l'utilisateur (un même numéro peut être légitime).
+ */
+export async function findCustomerPhoneMatches(
+  phone: string,
+  excludeId?: string
+): Promise<Customer[]> {
+  const normalized = normalizePhone(phone);
+  if (normalized.length < 3) return [];
+
+  const supabase = await createServerSupabase();
+  const { data, error } = await supabase
+    .from("customers")
+    .select("*")
+    .neq("phone", null)
+    .neq("id", excludeId ?? "");
+
+  if (error) return [];
+  return (data as DatabaseCustomer[])
+    .map((row) => toCustomer(row))
+    .filter((c) => normalizePhone(c.phone) === normalized);
 }
 
 export async function getCustomer(id: string): Promise<Customer | null> {

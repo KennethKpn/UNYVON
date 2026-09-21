@@ -10,6 +10,10 @@ import {
   StickyNote,
   Loader2,
   AlertCircle,
+  AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  Pencil,
   X,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,6 +25,10 @@ import { cn, formatFCFA } from "@/lib/utils";
 import {
   getCustomers,
   createCustomer,
+  updateCustomer,
+  archiveCustomer,
+  restoreCustomer,
+  findCustomerPhoneMatches,
 } from "@/lib/supabase/customer-actions";
 import { SUPABASE_NOT_CONFIGURED_MESSAGE } from "@/lib/supabase/env";
 import type { Customer } from "@/types";
@@ -41,7 +49,9 @@ export default function CustomersPage() {
   const [error, setError] = useState("");
   const [source, setSource] = useState<"supabase" | "mock">("mock");
   const [showModal, setShowModal] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<ViewCustomer | null>(null);
   const [query, setQuery] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,6 +123,82 @@ export default function CustomersPage() {
     setCustomers((prev) => [{ ...local, source: "mock" as const }, ...prev]);
   }
 
+  async function handleUpdate(
+    input: NewCustomerInput
+  ): Promise<{ ok: boolean; duplicateNames?: string[] }> {
+    if (!editCustomer) return { ok: false };
+    if (source === "supabase") {
+      try {
+        const updated = await updateCustomer({
+          id: editCustomer.id,
+          ...input,
+        });
+        setCustomers((prev) =>
+          prev.map((c) =>
+            c.id === updated.id
+              ? {
+                  ...updated,
+                  totalPurchases: c.totalPurchases,
+                  outstandingBalance: c.outstandingBalance,
+                  source: "supabase" as const,
+                }
+              : c
+          )
+        );
+        return { ok: true };
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Erreur lors de la modification"
+        );
+        return { ok: false };
+      }
+    }
+    return { ok: false };
+  }
+
+  /**
+   * Archivage (is_active=false) : PAS de suppression physique afin de
+   * conserver l'historique des ventes et créances rattachées au client.
+   */
+  async function handleArchive(id: string) {
+    if (source !== "supabase") return;
+    const target = customers.find((c) => c.id === id);
+    if (target && target.outstandingBalance > 0) {
+      setError(
+        `Impossible d'archiver ${target.name} : il reste ${formatFCFA(
+          target.outstandingBalance
+        )} de créance à recouvrer. Encaissez le solde ou enregistrez un paiement avant d'archiver.`
+      );
+      return;
+    }
+    try {
+      setBusyId(id);
+      await archiveCustomer(id);
+      setCustomers((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, isActive: false } : c))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur archivage");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function handleRestore(id: string) {
+    if (source !== "supabase") return;
+    try {
+      setBusyId(id);
+      await restoreCustomer(id);
+      setCustomers((prev) =>
+        prev.map((c) => (c.id === id ? { ...c, isActive: true } : c))
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erreur restauration");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -126,7 +212,12 @@ export default function CustomersPage() {
           </p>
         </div>
         {permissions?.canManageCustomers && (
-          <Button onClick={() => setShowModal(true)}>
+          <Button
+            onClick={() => {
+              setEditCustomer(null);
+              setShowModal(true);
+            }}
+          >
             <Plus className="w-4 h-4" />
             Ajouter un client
           </Button>
@@ -206,7 +297,7 @@ export default function CustomersPage() {
                       <Badge variant="warning">Créance</Badge>
                     )}
                     {!customer.isActive && (
-                      <Badge variant="default">Inactif</Badge>
+                      <Badge variant="default">Archivé</Badge>
                     )}
                   </div>
                 </div>
@@ -253,6 +344,54 @@ export default function CustomersPage() {
                     </div>
                   </div>
                 )}
+
+                {source === "supabase" && permissions?.canManageCustomers && (
+                  <div className="mt-3 pt-3 border-t border-border flex items-center justify-end gap-1">
+                    {customer.isActive ? (
+                      <>
+                        <button
+                          onClick={() => {
+                            setEditCustomer(customer);
+                            setShowModal(true);
+                          }}
+                          aria-label={`Modifier ${customer.name}`}
+                          className="flex items-center gap-1 px-2 py-1 rounded-[8px] text-xs text-muted hover:text-primary hover:bg-primary/10 transition-colors"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Modifier
+                        </button>
+                        <button
+                          onClick={() => handleArchive(customer.id)}
+                          disabled={busyId === customer.id}
+                          aria-label={`Archiver ${customer.name}`}
+                          title="Archiver — l'historique des ventes est conservé"
+                          className="flex items-center gap-1 px-2 py-1 rounded-[8px] text-xs text-muted hover:text-error hover:bg-error/10 transition-colors disabled:opacity-50"
+                        >
+                          {busyId === customer.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Archive className="w-3.5 h-3.5" />
+                          )}
+                          Archiver
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => handleRestore(customer.id)}
+                        disabled={busyId === customer.id}
+                        aria-label={`Restaurer ${customer.name}`}
+                        className="flex items-center gap-1 px-2 py-1 rounded-[8px] text-xs text-muted hover:text-success hover:bg-success/10 transition-colors disabled:opacity-50"
+                      >
+                        {busyId === customer.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <ArchiveRestore className="w-3.5 h-3.5" />
+                        )}
+                        Restaurer
+                      </button>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
@@ -268,8 +407,13 @@ export default function CustomersPage() {
 
       {showModal && (
         <CustomerModal
-          onClose={() => setShowModal(false)}
-          onSave={handleCreate}
+          editCustomer={editCustomer}
+          onClose={() => {
+            setShowModal(false);
+            setEditCustomer(null);
+          }}
+          onCreate={handleCreate}
+          onUpdate={handleUpdate}
         />
       )}
     </div>
@@ -277,32 +421,91 @@ export default function CustomersPage() {
 }
 
 function CustomerModal({
+  editCustomer,
   onClose,
-  onSave,
+  onCreate,
+  onUpdate,
 }: {
+  editCustomer: ViewCustomer | null;
   onClose: () => void;
-  onSave: (input: NewCustomerInput) => void;
+  onCreate: (input: NewCustomerInput) => void | Promise<void>;
+  onUpdate: (
+    input: NewCustomerInput
+  ) => Promise<{ ok: boolean; duplicateNames?: string[] }>;
 }) {
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [address, setAddress] = useState("");
-  const [notes, setNotes] = useState("");
+  const [name, setName] = useState(editCustomer?.name ?? "");
+  const [phone, setPhone] = useState(editCustomer?.phone ?? "");
+  const [email, setEmail] = useState(editCustomer?.email ?? "");
+  const [address, setAddress] = useState(editCustomer?.address ?? "");
+  const [notes, setNotes] = useState(editCustomer?.notes ?? "");
   const [saving, setSaving] = useState(false);
 
-  const canSubmit = name.trim().length > 0 && !saving;
+  // Détection de doublons téléphone DANS l'organisation (aucune unicité
+  // globale imposée) : simple avertissement, décision explicite possible.
+  const [dupWarning, setDupWarning] = useState<{
+    names: string[];
+    acknowledged: boolean;
+  } | null>(null);
+  const [checkingPhone, setCheckingPhone] = useState(false);
+
+  const isEdit = !!editCustomer;
+  const canSubmit = name.trim().length > 0 && !saving && !checkingPhone;
+
+  const checkPhoneDuplicate = async (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed.length < 3) {
+      setDupWarning(null);
+      return;
+    }
+    setCheckingPhone(true);
+    try {
+      const matches = await findCustomerPhoneMatches(
+        trimmed,
+        editCustomer?.id
+      );
+      const names = matches.map((m) => m.name);
+      if (names.length > 0) {
+        // Conserver l'acquittement si le même avertissement est déjà connu.
+        setDupWarning((prev) =>
+          prev &&
+          prev.names.join("|") === names.join("|") &&
+          prev.acknowledged
+            ? prev
+            : { names, acknowledged: false }
+        );
+      } else {
+        setDupWarning(null);
+      }
+    } catch {
+      // La détection ne doit jamais bloquer la saisie.
+      setDupWarning(null);
+    } finally {
+      setCheckingPhone(false);
+    }
+  };
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
+    // En création, on propose explicitement de confirmer si doublon détecté.
+    if (dupWarning && !dupWarning.acknowledged) {
+      setDupWarning({ ...dupWarning, acknowledged: true });
+      return;
+    }
     setSaving(true);
     try {
-      await onSave({
+      const input = {
         name: name.trim(),
         phone: phone.trim(),
         email: email.trim(),
         address: address.trim(),
         notes: notes.trim(),
-      });
+      };
+      if (isEdit) {
+        const res = await onUpdate(input);
+        if (!res.ok) return;
+      } else {
+        await onCreate(input);
+      }
       onClose();
     } catch {
       setSaving(false);
@@ -314,17 +517,19 @@ function CustomerModal({
       className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
-      aria-label="Ajouter un client"
+      aria-label={isEdit ? "Modifier un client" : "Ajouter un client"}
     >
       <div className="min-h-full flex items-center justify-center p-4">
         <div className="bg-surface rounded-card border border-border shadow-lg w-full max-w-lg max-h-[90vh] flex flex-col">
         <div className="shrink-0 p-6 border-b border-border flex items-start justify-between">
           <div>
             <h2 className="font-display font-semibold text-lg text-ink">
-              Ajouter un client
+              {isEdit ? "Modifier le client" : "Ajouter un client"}
             </h2>
             <p className="text-sm text-muted mt-1">
-              Un numéro de référence (CLI-XXXX) sera attribué automatiquement.
+              {isEdit
+                ? "Mettre à jour les informations du client."
+                : "Un numéro de référence (CLI-XXXX) sera attribué automatiquement."}
             </p>
           </div>
           <button
@@ -360,15 +565,39 @@ function CustomerModal({
               className="text-sm font-medium text-text block mb-1.5"
             >
               Téléphone
+              {checkingPhone && (
+                <Loader2 className="w-3 h-3 animate-spin inline ml-2 text-muted" />
+              )}
             </label>
             <input
               id="cust-phone"
               type="text"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => {
+                setPhone(e.target.value);
+                void checkPhoneDuplicate(e.target.value);
+              }}
+              onBlur={() => void checkPhoneDuplicate(phone)}
               placeholder="+229 ..."
               className="w-full h-11 px-4 rounded-[10px] border border-border bg-surface text-sm text-text placeholder:text-muted focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
             />
+            {dupWarning && (
+              <div
+                role="alert"
+                className="mt-2 p-3 rounded-[10px] bg-warning/10 border border-warning/30"
+              >
+                <p className="text-xs text-warning flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>
+                    {dupWarning.names.length === 1
+                      ? "Ce numéro est déjà utilisé par "
+                      : "Ce numéro est déjà utilisé par "}
+                    <strong>{dupWarning.names.join(", ")}</strong>. Vérifiez
+                    qu&apos;il ne s&apos;agit pas d&apos;un doublon.
+                  </span>
+                </p>
+              </div>
+            )}
           </div>
 
           <div>
@@ -427,12 +656,23 @@ function CustomerModal({
           <Button variant="outline" onClick={onClose} disabled={saving}>
             Annuler
           </Button>
-          <Button onClick={handleSubmit} disabled={!canSubmit}>
+          <Button
+            onClick={handleSubmit}
+            disabled={!canSubmit}
+            title={
+              dupWarning && !dupWarning.acknowledged
+                ? "Numéro déjà utilisé — confirmez pour continuer"
+                : undefined
+            }
+          >
             {saving ? (
               <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              "Ajouter"
-            )}
+            ) : null}
+            {dupWarning && !dupWarning.acknowledged
+              ? "Confirmer malgré le doublon"
+              : isEdit
+              ? "Enregistrer"
+              : "Ajouter"}
           </Button>
         </div>
         </div>

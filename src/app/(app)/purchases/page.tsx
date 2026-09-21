@@ -213,6 +213,25 @@ export default function PurchasesPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers de saisie quantité / coût
+// ---------------------------------------------------------------------------
+
+function toNum(v: string): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** Quantité valide : entier strictement positif (rejette vide, 0, négatif, décimal). */
+function isPositiveInt(v: string): boolean {
+  return /^[1-9]\d*$/.test(v);
+}
+
+/** Coût valide : entier >= 0 (rejette vide et négatif ; 0 = gratuit autorisé). */
+function isNonNegativeInt(v: string): boolean {
+  return /^(0|[1-9]\d*)$/.test(v);
+}
+
+// ---------------------------------------------------------------------------
 // Modal : Nouvel achat
 // ---------------------------------------------------------------------------
 
@@ -231,7 +250,7 @@ function PurchaseModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [supplierId, setSupplierId] = useState("");
+  const [supplierId, setSupplierId] = useState(""); // "" = aucun fournisseur présélectionné : la sélection est OBLIGATOIRE
   const [creatingSupplier, setCreatingSupplier] = useState(false);
   const [supplierName, setSupplierName] = useState("");
   const [supplierPhone, setSupplierPhone] = useState("");
@@ -239,7 +258,7 @@ function PurchaseModal({
   const [reference, setReference] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
-  const [lines, setLines] = useState<{ productId: string; quantity: number; unitCost: number }[]>([]);
+  const [lines, setLines] = useState<{ productId: string; quantity: string; unitCost: string }[]>([]);
 
   useEffect(() => {
     Promise.all([getSuppliers(), getProducts()])
@@ -264,6 +283,7 @@ function PurchaseModal({
         notes: "",
       });
       setSuppliers((prev) => [...prev, created]);
+      // Création inline réussie → le fournisseur est automatiquement sélectionné.
       setSupplierId(created.id);
       setCreatingSupplier(false);
       setSupplierName("");
@@ -276,22 +296,60 @@ function PurchaseModal({
   };
 
   const addLine = () => {
-    setLines((prev) => [...prev, { productId: "", quantity: 1, unitCost: 0 }]);
+    // Quantité et coût initialisés vides : la valeur ne devient numérique qu'après saisie.
+    setLines((prev) => [...prev, { productId: "", quantity: "", unitCost: "" }]);
   };
 
-  const updateLine = (idx: number, patch: Partial<{ productId: string; quantity: number; unitCost: number }>) => {
+  const updateLine = (
+    idx: number,
+    patch: Partial<{ productId: string; quantity: string; unitCost: string }>
+  ) => {
     setLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  };
+
+  // Quantité saisie sous forme de texte : vide = pas encore de valeur numérique.
+  // Validation à la saisie : entier strictement positif (pas de 0, pas de négatif, pas de décimal).
+  const updateLineQuantity = (idx: number, raw: string) => {
+    if (raw === "") {
+      updateLine(idx, { quantity: "" });
+      return;
+    }
+    if (!/^(0|[1-9]\d*)$/.test(raw)) return; // rejette 0 seul, négatifs, décimales, texte
+    updateLine(idx, { quantity: raw });
+  };
+
+  const updateLineUnitCost = (idx: number, raw: string) => {
+    if (raw === "") {
+      updateLine(idx, { unitCost: "" });
+      return;
+    }
+    // Montant en FCFA : entier >= 0 (pas de négatif).
+    if (!/^(0|[1-9]\d*)$/.test(raw)) return;
+    updateLine(idx, { unitCost: raw });
   };
 
   const removeLine = (idx: number) => {
     setLines((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  const total = lines.reduce((sum, l) => sum + l.quantity * l.unitCost, 0);
-  const canSubmit = supplierId && lines.length > 0 && lines.every((l) => l.productId && l.quantity > 0 && l.unitCost >= 0) && total > 0;
+  const total = lines.reduce((sum, l) => sum + toNum(l.quantity) * toNum(l.unitCost), 0);
+  // Validation : fournisseur OBLIGATOIRE (pas de présélection), chaque ligne doit avoir
+  // un produit, une quantité valide (> 0, non vide, non décimale) et un coût >= 0.
+  const canSubmit =
+    !!supplierId &&
+    lines.length > 0 &&
+    lines.every(
+      (l) => !!l.productId && isPositiveInt(l.quantity) && isNonNegativeInt(l.unitCost)
+    ) &&
+    total > 0;
 
   const handleSubmit = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit) {
+      if (!supplierId) {
+        setError("Veuillez sélectionner un fournisseur.");
+      }
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
@@ -300,7 +358,11 @@ function PurchaseModal({
         reference,
         purchaseDate,
         notes,
-        items: lines.map((l) => ({ productId: l.productId, quantity: l.quantity, unitCost: l.unitCost })),
+        items: lines.map((l) => ({
+          productId: l.productId,
+          quantity: toNum(l.quantity),
+          unitCost: toNum(l.unitCost),
+        })),
       };
       await createPurchase(input);
       onCreated();
@@ -406,22 +468,25 @@ function PurchaseModal({
                     </div>
                   </div>
                 ) : (
-                  <select
-                    id="pur-supplier"
-                    value={supplierId}
-                    onChange={(e) => setSupplierId(e.target.value)}
-                    className="w-full h-11 px-4 rounded-[10px] border border-border bg-surface text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
-                  >
-                    <option value="">Sélectionner un fournisseur</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                    {suppliers.length === 0 && !canCreateSupplier && (
-                      <option value="" disabled>
-                        Aucun fournisseur disponible
-                      </option>
-                    )}
-                  </select>
+                  <>
+                    <select
+                      id="pur-supplier"
+                      value={supplierId}
+                      onChange={(e) => setSupplierId(e.target.value)}
+                      required
+                      aria-describedby="pur-supplier-hint"
+                      className="w-full h-11 px-4 rounded-[10px] border border-border bg-surface text-sm text-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    >
+                      {/* Aucune présélection : l'utilisateur DOIT choisir un fournisseur. */}
+                      <option value="">Sélectionner un fournisseur *</option>
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </select>
+                    <p id="pur-supplier-hint" className="text-xs text-muted mt-1">
+                      Sélection obligatoire pour enregistrer l&apos;achat.
+                    </p>
+                  </>
                 )}
               </div>
 
@@ -472,25 +537,25 @@ function PurchaseModal({
                         ))}
                       </select>
                       <input
-                        type="number"
-                        min="1"
-                        value={line.quantity || ""}
-                        onChange={(e) => updateLine(idx, { quantity: Math.max(1, Number(e.target.value) || 1) })}
-                        placeholder="Qté"
+                        type="text"
+                        inputMode="numeric"
+                        value={line.quantity}
+                        onChange={(e) => updateLineQuantity(idx, e.target.value)}
+                        placeholder="Ex. 5"
                         aria-label="Quantité"
-                        className="w-16 h-9 px-2 rounded-[8px] border border-border text-sm text-center text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-20 h-9 px-2 rounded-[8px] border border-border text-sm text-center text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
                       <input
-                        type="number"
-                        min="0"
-                        value={line.unitCost || ""}
-                        onChange={(e) => updateLine(idx, { unitCost: Math.max(0, Number(e.target.value) || 0) })}
-                        placeholder="Coût"
+                        type="text"
+                        inputMode="numeric"
+                        value={line.unitCost}
+                        onChange={(e) => updateLineUnitCost(idx, e.target.value)}
+                        placeholder="Ex. 15000"
                         aria-label="Coût unitaire"
-                        className="w-24 h-9 px-2 rounded-[8px] border border-border text-sm text-right text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-28 h-9 px-2 rounded-[8px] border border-border text-sm text-right text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
                       <span className="text-xs text-muted whitespace-nowrap">
-                        {formatFCFA(line.quantity * line.unitCost)}
+                        {formatFCFA(Number(line.quantity) * Number(line.unitCost))}
                       </span>
                       <button
                         onClick={() => removeLine(idx)}
