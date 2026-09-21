@@ -94,7 +94,7 @@ export default function PurchasesPage() {
 
       <Card variant="elevated">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full min-w-[800px]">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left text-xs font-medium text-muted px-6 py-3">Date</th>
@@ -525,7 +525,7 @@ function PurchaseModal({
                 </div>
                 <div className="space-y-2">
                   {lines.map((line, idx) => (
-                    <div key={idx} className="flex items-center gap-2 p-3 rounded-[10px] border border-border">
+                    <div key={idx} className="flex flex-col sm:flex-row sm:items-center gap-2 p-3 rounded-[10px] border border-border">
                       <select
                         value={line.productId}
                         onChange={(e) => updateLine(idx, { productId: e.target.value })}
@@ -543,7 +543,7 @@ function PurchaseModal({
                         onChange={(e) => updateLineQuantity(idx, e.target.value)}
                         placeholder="Ex. 5"
                         aria-label="Quantité"
-                        className="w-20 h-9 px-2 rounded-[8px] border border-border text-sm text-center text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full sm:w-20 h-9 px-2 rounded-[8px] border border-border text-sm text-center text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
                       <input
                         type="text"
@@ -552,18 +552,20 @@ function PurchaseModal({
                         onChange={(e) => updateLineUnitCost(idx, e.target.value)}
                         placeholder="Ex. 15000"
                         aria-label="Coût unitaire"
-                        className="w-28 h-9 px-2 rounded-[8px] border border-border text-sm text-right text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        className="w-full sm:w-28 h-9 px-2 rounded-[8px] border border-border text-sm text-right text-ink focus:outline-none focus:ring-2 focus:ring-primary/20"
                       />
-                      <span className="text-xs text-muted whitespace-nowrap">
-                        {formatFCFA(Number(line.quantity) * Number(line.unitCost))}
-                      </span>
-                      <button
-                        onClick={() => removeLine(idx)}
-                        aria-label="Supprimer la ligne"
-                        className="p-1 rounded text-muted hover:text-danger transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center justify-between sm:justify-start sm:gap-2">
+                        <span className="text-xs text-muted whitespace-nowrap">
+                          {formatFCFA(Number(line.quantity) * Number(line.unitCost))}
+                        </span>
+                        <button
+                          onClick={() => removeLine(idx)}
+                          aria-label="Supprimer la ligne"
+                          className="p-1 rounded text-muted hover:text-danger transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                   {lines.length === 0 && (

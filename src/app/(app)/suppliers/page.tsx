@@ -237,7 +237,7 @@ export default function SuppliersPage() {
 
       <Card variant="elevated">
         <div className="overflow-x-auto">
-          <table className="w-full">
+              <table className="w-full">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left text-xs font-medium text-muted px-6 py-3">
@@ -368,7 +368,7 @@ export default function SuppliersPage() {
           </summary>
           <Card variant="elevated" className="mt-3">
             <div className="overflow-x-auto">
-              <table className="w-full">
+          <table className="w-full min-w-[800px]">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left text-xs font-medium text-muted px-6 py-3">

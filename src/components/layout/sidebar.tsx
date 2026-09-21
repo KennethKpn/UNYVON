@@ -82,6 +82,9 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
       {/* Mobile sidebar */}
       <aside
+        role="dialog"
+        aria-modal="true"
+        aria-label="Menu de navigation"
         className={cn(
           "fixed inset-y-0 left-0 z-50 flex flex-col w-[280px] bg-surface border-r border-border transform transition-transform duration-300 ease-out md:hidden",
           mobileOpen ? "translate-x-0" : "-translate-x-full"
@@ -96,7 +99,7 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors"
+            className="min-h-[44px] min-w-[44px] p-3 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors flex items-center justify-center"
             aria-label="Fermer le menu"
           >
             <X className="w-5 h-5" />
@@ -139,7 +142,7 @@ function SidebarContent({ pathname, collapsed, navItems, bottomItems, onToggleCo
                 href={item.href}
                 onClick={onLinkClick}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-[10px] text-sm font-medium transition-colors duration-150",
+                  "flex items-center gap-3 px-3 py-2.5 min-h-[44px] rounded-[10px] text-sm font-medium transition-colors duration-150",
                   active
                     ? "bg-lavender-soft text-primary"
                     : "text-muted hover:text-text hover:bg-background"
@@ -165,7 +168,7 @@ function SidebarContent({ pathname, collapsed, navItems, bottomItems, onToggleCo
                 href={item.href}
                 onClick={onLinkClick}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2.5 rounded-[10px] text-sm font-medium transition-colors duration-150",
+                  "flex items-center gap-3 px-3 py-2.5 min-h-[44px] rounded-[10px] text-sm font-medium transition-colors duration-150",
                   isNova && !active && "text-primary/70 hover:text-primary",
                   active
                     ? "bg-lavender-soft text-primary"

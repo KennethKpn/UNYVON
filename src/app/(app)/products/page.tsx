@@ -292,7 +292,7 @@ export default function ProductsPage() {
 
       <Card variant="elevated">
         <div className="overflow-x-auto">
-          <table className="w-full">
+              <table className="w-full">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left text-xs font-medium text-muted px-6 py-3">
@@ -415,7 +415,7 @@ export default function ProductsPage() {
           </summary>
           <Card variant="elevated" className="mt-3">
             <div className="overflow-x-auto">
-              <table className="w-full">
+          <table className="w-full min-w-[900px]">
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left text-xs font-medium text-muted px-6 py-3">
@@ -602,7 +602,7 @@ function ProductModal({
             </select>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label
                 htmlFor="prod-unit"
@@ -639,7 +639,7 @@ function ProductModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label
                 htmlFor="prod-sale"

@@ -14,7 +14,7 @@ export function Topbar({ onMenuToggle }: TopbarProps) {
         <button
           onClick={onMenuToggle}
           aria-label="Ouvrir le menu"
-          className="md:hidden p-2 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors"
+          className="md:hidden min-h-[44px] min-w-[44px] p-3 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors flex items-center justify-center"
         >
           <Menu className="w-5 h-5" />
         </button>
