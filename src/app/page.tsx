@@ -518,7 +518,7 @@ export default function LandingPage() {
           <Link href="/signup">
             <Button
               size="lg"
-              className="bg-white text-primary hover:bg-white/90 font-semibold"
+              className="bg-white text-ink! hover:bg-white/90 font-semibold"
             >
               Commencer gratuitement
               <ArrowRight className="w-5 h-5" />
