@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "e2e": "playwright test",
+    "e2e:audit": "playwright test e2e/specs/audit.spec.ts e2e/specs/cta.spec.ts e2e/specs/tables.spec.ts e2e/specs/modals.spec.ts e2e/specs/onboarding.spec.ts",
+    "e2e:update": "playwright test e2e/specs/visual.spec.ts --update-snapshots",
+    "e2e:serve": "next build && next start",
+    "e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",
@@ -18,6 +23,7 @@
     "recharts": "^2.15.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

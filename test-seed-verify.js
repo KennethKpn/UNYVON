@@ -1,7 +1,23 @@
 const { createClient } = require("@supabase/supabase-js");
+const { loadEnv } = require("./test-env");
 
-const url = "https://mtiwvzvlmwoocwbzogiu.supabase.co";
-const service = "sb_secret_5zJ2l8KMT7GPs8dbpz0fpQ_gKPtNZKW";
+loadEnv();
+
+// Règle Phase 3K : ce script lit en service_role (bypass RLS). Il n'utilise
+// ni clé en dur, ni la base de production — uniquement une base de test
+// dédiée, explicite et distincte de la base applicative.
+const url = process.env.SUPABASE_SERVICE_ROLE_TEST_URL;
+const service = process.env.SUPABASE_SERVICE_ROLE_TEST_KEY;
+const appUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+if (!service || !url || url === appUrl) {
+  console.log(
+    "SKIP: base de test dédiée requise (SUPABASE_SERVICE_ROLE_TEST_URL + SUPABASE_SERVICE_ROLE_TEST_KEY, URL ≠ base applicative). " +
+      "Le service_role ne cible jamais la base de production."
+  );
+  console.log("\n=== VERDICT: SKIP ===");
+  process.exit(0);
+}
 
 const sb = createClient(url, service, { auth: { persistSession: false } });
 const results = [];

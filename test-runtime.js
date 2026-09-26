@@ -1,14 +1,22 @@
 const { createClient } = require("@supabase/supabase-js");
+const { loadEnv } = require("./test-env");
 
-const url = "https://mtiwvzvlmwoocwbzogiu.supabase.co";
-const anon = "sb_publishable_o0ntm3gCtD6bspCWdLGeRw_gg0MSzw4";
-const sr = "sb_secret_5zJ2l8KMT7GPs8dbpz0fpQ_gKPtNZKW";
+loadEnv();
+
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+if (!url || !anon) {
+  console.error(
+    "FATAL: NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY absents (.env.local)"
+  );
+  process.exit(1);
+}
 
 const results = [];
-function log(test, ok, detail) {
-  const status = ok ? "PASS" : "FAIL";
-  results.push({ test, status, detail });
-  console.log(`[${status}] ${test}: ${detail}`);
+function log(test, status, detail) {
+  const s = status === true ? "PASS" : status === "SKIP" ? "SKIP" : "FAIL";
+  results.push({ test, status: s, detail });
+  console.log(`[${s}] ${test}: ${detail}`);
 }
 
 async function run() {
@@ -143,10 +151,27 @@ async function run() {
 
   // ============================================================
   // Fallback: service-role key access (bypasses RLS)
+  // Règle Phase 3K : la clé service_role n'est JAMAIS fournie en dur et
+  // ne cible JAMAIS la base de production. Elle exige une base de
+  // test/dédiée explicite (URL différente de la base applicative).
   // ============================================================
-  const sbSR = createClient(url, sr, { auth: { persistSession: false } });
-  const { data: allPlans } = await sbSR.from("plans").select("code");
-  log("FALLBACK-service-role", allPlans?.length === 3, `plans=${allPlans?.length}`);
+  const srUrl = process.env.SUPABASE_SERVICE_ROLE_TEST_URL;
+  const srKey = process.env.SUPABASE_SERVICE_ROLE_TEST_KEY;
+  if (srKey && srUrl && srUrl !== url) {
+    const sbSR = createClient(srUrl, srKey, { auth: { persistSession: false } });
+    const { data: allPlans, error: srErr } = await sbSR.from("plans").select("code");
+    log(
+      "FALLBACK-service-role",
+      srErr ? false : allPlans?.length === 3,
+      srErr ? srErr.message : `plans=${allPlans?.length}`
+    );
+  } else {
+    log(
+      "FALLBACK-service-role",
+      "SKIP",
+      "base de test dédiée requise (SUPABASE_SERVICE_ROLE_TEST_URL + SUPABASE_SERVICE_ROLE_TEST_KEY, URL ≠ base applicative) — refus d'agir en service_role contre la production"
+    );
+  }
 
   // ============================================================
   // SUMMARY
@@ -154,7 +179,8 @@ async function run() {
   console.log("\n========== SUMMARY ==========");
   const passed = results.filter((r) => r.status === "PASS").length;
   const failed = results.filter((r) => r.status === "FAIL").length;
-  console.log(`PASSED: ${passed}/${results.length}`);
+  const skipped = results.filter((r) => r.status === "SKIP").length;
+  console.log(`PASSED: ${passed}/${results.length}${skipped ? ` (SKIP: ${skipped})` : ""}`);
   if (failed > 0) {
     console.log("FAILURES:");
     results.filter((r) => r.status === "FAIL").forEach((r) => console.log(`  - ${r.test}: ${r.detail}`));

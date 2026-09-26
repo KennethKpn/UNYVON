@@ -1,21 +1,24 @@
 @import "tailwindcss";
 
 @theme inline {
-  /* UNYVON Palette */
-  --color-primary: #6D5DFB;
+  /* UNYVON Palette — Phase 3L : chaque couleur de texte passe ≥4.5:1 sur
+     white / background (#F8F9FC) / lavender-soft (#F1EFFF), teintes conservées. */
+  --color-primary: #6556E9;
   --color-primary-dark: #5143D6;
+  --color-primary-foreground: #FFFFFF;
   --color-lavender: #9B8CFF;
   --color-lavender-soft: #F1EFFF;
   --color-ink: #111318;
   --color-text: #344054;
-  --color-muted: #667085;
+  --color-muted: #646D82;
+  --color-muted-foreground: #FFFFFF;
   --color-border: #E4E7EC;
   --color-surface: #FFFFFF;
   --color-background: #F8F9FC;
-  --color-success: #12B76A;
-  --color-warning: #F79009;
-  --color-error: #F04438;
-  --color-info: #2E90FA;
+  --color-success: #0C7D49;
+  --color-warning: #A05D06;
+  --color-error: #C7382E;
+  --color-info: #236EBF;
 
   /* Fonts */
   --font-display: "Sora", sans-serif;
@@ -75,6 +78,20 @@ body {
 
 h1, h2, h3, h4, h5, h6 {
   font-family: var(--font-display);
+}
+
+/* Phase 3L — cibles tactiles ≥44×44px sur viewports mobiles (audit Phase 3K :
+   boutons, liens de navigation, champs de formulaire < 44px). Les liens inline
+   dans un flux de texte sont ignorés (non applicables au min-height). */
+@media (max-width: 767.98px) {
+  button:not(:disabled),
+  a[href],
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    min-height: 44px;
+    min-width: 44px;
+  }
 }
 
 /* Focus visible — accessibility */

@@ -1,7 +1,10 @@
 const { createClient } = require("@supabase/supabase-js");
 
-const SUPABASE_URL = "https://mtiwvzvlmwoocwbzogiu.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_o0ntm3gCtD6bspCWdLGeRw_gg0MSzw4";
+const { loadEnv } = require("./test-env");
+loadEnv();
+
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 const PW = "SecureTest2024!";
 

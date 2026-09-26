@@ -10,6 +10,18 @@ Corrections implémentées : page Fournisseurs dédiée, fournisseur obligatoire
 
 ---
 
+## Phase 3K — Audit E2E multi-viewports ✅ (septembre 2026)
+
+Suite Playwright exécutée sur 7 viewports (360×800 → 1920×1080) : 137 constats déterministes confirmés sur 3 runs consécutifs (run3/run5 = 137 `toEqual`, 0 flake infra). Baselines visuelles 74/74 validées. 899 constats enregistrés dans `e2e/artifacts/findings.jsonl` — dominés par le contraste (66%, 596) et les touch targets (24%, 215). Livrable : [PHASE_3K_REPORT.md](PHASE_3K_REPORT.md).
+
+---
+
+## Phase 3L — Corrections de l'audit UI ✅ (septembre 2026)
+
+Les 899 constats de la Phase 3K corrigés à la source : 6 tokens de couleur assombris en conservant leurs teintes (WCAG ≥ 4.5:1 sur white / background / lavender-soft), 2 tokens foreground ajoutés (`text-primary-foreground` / `text-muted-foreground` utilisées mais inexistantes dans `@theme`), règle mobile 44×44 unique dans `globals.css`, `aria-label` sur les boutons icône (sidebar + sales), 3 spots de typographie < 12px, nav landing mobile (CTA répartis + débordements réglés). Rerun complet : **899 → 0 constat**, Playwright 763/763, build/lint/tsc/80 baselines au vert. Verdict : **PRODUCTION UI READY**. Livrable : [PHASE_3L_REPORT.md](PHASE_3L_REPORT.md).
+
+---
+
 ## 🔜 BACKLOG — Paiements opérateurs + justification/motif + rapprochement automatique
 
 > **Statut : idée documentée — NE PAS implémenter dans cette phase.**

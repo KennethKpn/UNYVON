@@ -449,6 +449,7 @@ export default function SalesPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                aria-label="Confirmer la vente"
                                 onClick={() => handleConfirm(sale.id)}
                                 disabled={actionLoading === sale.id}
                               >
@@ -461,6 +462,7 @@ export default function SalesPage() {
                               <Button
                                 variant="ghost"
                                 size="sm"
+                                aria-label="Annuler la vente"
                                 onClick={() => handleCancel(sale.id)}
                                 disabled={actionLoading === sale.id}
                               >
@@ -472,6 +474,7 @@ export default function SalesPage() {
                             <Button
                               variant="ghost"
                               size="sm"
+                              aria-label="Enregistrer un paiement"
                               onClick={() => setPayForSale(sale)}
                             >
                               <CreditCard className="h-4 w-4 text-primary" />
@@ -503,6 +506,7 @@ export default function SalesPage() {
                 <Button
                   variant="ghost"
                   size="sm"
+                  aria-label="Fermer"
                   onClick={() => {
                     setShowNewSale(false);
                     setCart([]);

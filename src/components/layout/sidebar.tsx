@@ -193,6 +193,7 @@ function SidebarContent({ pathname, collapsed, navItems, bottomItems, onToggleCo
       {onToggleCollapse && (
         <button
           onClick={onToggleCollapse}
+          aria-label={collapsed ? "Déplier la barre latérale" : "Replier la barre latérale"}
           className="hidden md:flex items-center justify-center h-12 border-t border-border text-muted hover:text-text transition-colors"
         >
           {collapsed ? (

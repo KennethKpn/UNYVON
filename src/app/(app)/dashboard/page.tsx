@@ -207,7 +207,7 @@ export default function DashboardPage() {
                             style={{ height: `${(p.receipts / maxRevenue) * 100}%` }}
                           />
                         </div>
-                        <span className="text-[10px] text-muted">{formatMonth(p.month)}</span>
+                        <span className="text-xs text-muted">{formatMonth(p.month)}</span>
                       </div>
                     ))}
                   </div>

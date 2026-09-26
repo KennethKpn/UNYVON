@@ -268,7 +268,7 @@ export default function CustomersPage() {
                     <h3 className="font-display font-semibold text-ink">
                       {customer.name}
                     </h3>
-                    <p className="text-[11px] text-muted font-mono mt-0.5">
+                    <p className="text-xs text-muted font-mono mt-0.5">
                       {getCustomerRef(customer.id)}
                     </p>
                     <div className="flex items-center gap-1.5 mt-1 text-xs text-muted">

@@ -165,7 +165,7 @@ export default function LandingPage() {
             </a>
           </div>
           <div className="flex items-center gap-3">
-            <Link href="/login">
+            <Link href="/login" className="hidden md:block">
               <Button variant="ghost" size="sm">
                 Se connecter
               </Button>
@@ -180,6 +180,7 @@ export default function LandingPage() {
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
               className="md:hidden p-2 rounded-[10px] text-muted hover:text-text hover:bg-background transition-colors"
               aria-label="Menu"
+              aria-expanded={mobileMenuOpen}
             >
               {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
             </button>
@@ -198,6 +199,19 @@ export default function LandingPage() {
             <a href="#pricing" className="block text-sm text-muted hover:text-text transition-colors py-2" onClick={() => setMobileMenuOpen(false)}>
               Tarifs
             </a>
+            <div className="pt-2 border-t border-border flex flex-col gap-2">
+              <Link href="/login" className="block" onClick={() => setMobileMenuOpen(false)}>
+                <Button variant="outline" className="w-full">
+                  Se connecter
+                </Button>
+              </Link>
+              <Link href="/signup" className="block" onClick={() => setMobileMenuOpen(false)}>
+                <Button className="w-full">
+                  Essai gratuit
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </Link>
+            </div>
           </div>
         )}
       </nav>

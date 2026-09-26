@@ -231,7 +231,7 @@ export default function InsightsPage() {
                           ? "Moyen"
                           : "Info"}
                       </Badge>
-                      <Badge variant="default" className="text-[10px]">
+                      <Badge variant="default">
                         {categoryLabels[insight.signal.category]}
                       </Badge>
                     </div>

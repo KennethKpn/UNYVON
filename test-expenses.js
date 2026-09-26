@@ -4,8 +4,11 @@
 
 const { createClient } = require("@supabase/supabase-js");
 
-const url = "https://mtiwvzvlmwoocwbzogiu.supabase.co";
-const anon = "sb_publishable_o0ntm3gCtD6bspCWdLGeRw_gg0MSzw4";
+const { loadEnv } = require("./test-env");
+loadEnv();
+
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 const results = [];
 function log(test, ok, detail) {
