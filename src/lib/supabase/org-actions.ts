@@ -1,6 +1,7 @@
 "use server";
 
 import { createServerSupabase } from "@/lib/supabase/server";
+import { resolveMemberOrg, resolveOwnedOrg } from "@/lib/supabase/org-resolve";
 
 export type OrgActionState =
   | { ok: true; organizationId: string }
@@ -59,38 +60,6 @@ export type OnboardingSyncState =
     }
   | { ok: false; error: string }
   | { ok: false; error: "UNAUTHENTICATED" | "NOT_CONFIGURED" | "NO_ORG" };
-
-/** Résout l'org la plus récente créée par l'utilisateur, sinon null. */
-async function resolveOwnedOrg(
-  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
-  userId: string
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("organizations")
-    .select("id")
-    .eq("created_by", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data?.id ?? null;
-}
-
-/** Résout l'org la plus récente dont l'utilisateur est membre, sinon null. */
-async function resolveMemberOrg(
-  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
-  userId: string
-): Promise<string | null> {
-  const { data } = await supabase
-    .from("organization_users")
-    .select("organization_id")
-    .eq("user_id", userId)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  return data?.organization_id ?? null;
-}
 
 /**
  * Crée l'organisation du premier utilisateur réel — OU réutilise celle qui

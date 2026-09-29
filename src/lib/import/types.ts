@@ -71,6 +71,30 @@ export type ImportFieldConfidence = (typeof IMPORT_FIELD_CONFIDENCES)[number];
 // Bucket `imports` : file_size_limit 26214400 (25 Mo) — 0011_import.sql.
 export const IMPORT_MAX_FILE_BYTES = 25 * 1024 * 1024;
 
+// Formats V1 acceptés (extension → MIME exact → source_kind SQL autorisé).
+// Une extension n'accepte QUE ses MIME listés : jamais d'incohérence
+// MIME/extension à l'insertion.
+export const IMPORT_V1_FORMATS = [
+  { extension: "pdf", mimeTypes: ["application/pdf"], sourceKinds: ["pdf"] },
+  { extension: "doc", mimeTypes: ["application/msword"], sourceKinds: ["doc"] },
+  {
+    extension: "docx",
+    mimeTypes: [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ],
+    sourceKinds: ["docx"],
+  },
+  {
+    extension: "md",
+    mimeTypes: ["text/markdown", "text/x-markdown", "text/plain"],
+    sourceKinds: ["md"],
+  },
+  { extension: "jpg", mimeTypes: ["image/jpeg"], sourceKinds: ["image"] },
+  { extension: "jpeg", mimeTypes: ["image/jpeg"], sourceKinds: ["image"] },
+  { extension: "png", mimeTypes: ["image/png"], sourceKinds: ["image"] },
+  { extension: "webp", mimeTypes: ["image/webp"], sourceKinds: ["image"] },
+] as const;
+
 // Colonnes cibles commitables par type d'entité (tables 0002/0003).
 // Règle « jamais d'invention » : un champ absent du document n'est pas
 // inventé, il porte confidence 'missing' + warning. Une référence vers une

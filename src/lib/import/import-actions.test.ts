@@ -1,0 +1,565 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// ---------------------------------------------------------------------------
+// Fake Supabase contrôlé par vi.hoisted (accessible dans le factory vi.mock).
+// Mimique strictement les chaînes utilisées par import-actions :
+//   auth.getUser / rpc("current_org_role") / from().select().eq().order()
+//   / from().insert().select().single() / from().update().eq().select().single()
+//   / from().delete().eq() / .single() → { data, error } (PGRST116 si vide)
+// ---------------------------------------------------------------------------
+
+const h = vi.hoisted(() => {
+  type Row = Record<string, unknown>;
+
+  const ORG = "11111111-1111-4111-8111-111111111111";
+  const SESSION = "22222222-2222-4222-8222-222222222222";
+  const DOC = "33333333-3333-4333-8333-333333333333";
+  const USER = "55555555-5555-4555-8555-555555555555";
+
+  const rpcCalls: Array<{ fn: string; args: unknown }> = [];
+
+  const db = {
+    sessions: [] as Row[],
+    documents: [] as Row[],
+    items: [] as Row[],
+    organizations: [] as Row[],
+    memberships: [] as Row[],
+    roles: { [ORG]: "owner" } as Record<string, string | null>,
+    user: { id: USER } as { id: string } | null,
+    insertError: null as string | null,
+    updateError: null as string | null,
+  };
+
+  const TABLES: Record<string, Row[]> = {
+    get import_sessions() {
+      return db.sessions;
+    },
+    get import_documents() {
+      return db.documents;
+    },
+    get import_items() {
+      return db.items;
+    },
+    get organizations() {
+      return db.organizations;
+    },
+    get organization_users() {
+      return db.memberships;
+    },
+  };
+
+  function reset() {
+    db.sessions = [];
+    db.documents = [];
+    db.items = [];
+    db.organizations = [{ id: ORG, created_by: USER, created_at: "2026-09-01T00:00:00+00:00" }];
+    db.memberships = [
+      { organization_id: ORG, user_id: USER, created_at: "2026-09-01T00:00:00+00:00" },
+    ];
+    db.roles = { [ORG]: "owner" };
+    db.user = { id: USER };
+    db.insertError = null;
+    db.updateError = null;
+    rpcCalls.length = 0;
+  }
+
+  function sessionRow(overrides: Row = {}): Row {
+    return {
+      id: SESSION,
+      organization_id: ORG,
+      created_by: USER,
+      state: "collecting",
+      created_at: "2026-09-29T00:00:00+00:00",
+      updated_at: "2026-09-29T00:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  function documentRow(overrides: Row = {}): Row {
+    return {
+      id: DOC,
+      session_id: SESSION,
+      organization_id: ORG,
+      original_name: "stock.pdf",
+      source_kind: "pdf",
+      mime_type: "application/pdf",
+      size_bytes: 1024,
+      storage_path: "placeholder",
+      state: "uploading",
+      page_count: null,
+      error_message: null,
+      processed_at: null,
+      created_at: "2026-09-29T00:00:00+00:00",
+      updated_at: "2026-09-29T00:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+  function builder(table: string) {
+    const st = {
+      op: "select" as "select" | "insert" | "update" | "delete",
+      filters: [] as Array<[string, unknown]>,
+      payload: null as Row | null,
+      orderBy: null as string | null,
+      descending: false,
+      selectedCols: "*",
+      limitN: 0,
+    };
+
+    function selectedRows(): Row[] {
+      const rows = [...(TABLES[table] ?? [])];
+      let out = rows.filter((row) =>
+        st.filters.every(([col, val]) => row[col] === val)
+      );
+      if (st.orderBy) {
+        const key = st.orderBy;
+        out = out.sort((a, b) => {
+          const cmp = String(a[key]).localeCompare(String(b[key]));
+          return st.descending ? -cmp : cmp;
+        });
+      }
+      return out;
+    }
+
+    function run(): { data: unknown; error: { message: string } | null } {
+      if (st.op === "insert") {
+        if (db.insertError) return { data: null, error: { message: db.insertError } };
+        const rows = TABLES[table] ?? [];
+        rows.push({ ...(st.payload as Row) });
+        return { data: [st.payload], error: null };
+      }
+      if (st.op === "update") {
+        if (db.updateError) return { data: null, error: { message: db.updateError } };
+        const rows = selectedRows();
+        for (const row of rows) Object.assign(row, st.payload);
+        return { data: rows, error: null };
+      }
+      if (st.op === "delete") {
+        const tableRows = TABLES[table] ?? [];
+        const toRemove = new Set(selectedRows());
+        for (let i = tableRows.length - 1; i >= 0; i--) {
+          if (toRemove.has(tableRows[i])) tableRows.splice(i, 1);
+        }
+        return { data: [], error: null };
+      }
+      return { data: selectedRows(), error: null };
+    }
+
+    const api = {
+      select(cols?: string) {
+        st.selectedCols = cols ?? "*";
+        return api;
+      },
+      eq(col: string, val: unknown) {
+        st.filters.push([col, val]);
+        return api;
+      },
+      order(col: string, opts?: { ascending?: boolean }) {
+        st.orderBy = col;
+        st.descending = opts?.ascending === false;
+        return api;
+      },
+      limit(n: number) {
+        st.limitN = n;
+        return api;
+      },
+      insert(payload: Row) {
+        st.op = "insert";
+        st.payload = payload;
+        return api;
+      },
+      update(payload: Row) {
+        st.op = "update";
+        st.payload = payload;
+        return api;
+      },
+      delete() {
+        st.op = "delete";
+        return api;
+      },
+      single() {
+        const result = run();
+        if (result.error) return Promise.resolve({ data: null, error: result.error });
+        const rows = result.data as Row[];
+        if (rows.length !== 1) {
+          return Promise.resolve({
+            data: null,
+            error: { message: "JSON object requested, multiple (or no) rows returned" },
+          });
+        }
+        return Promise.resolve({ data: rows[0], error: null });
+      },
+      maybeSingle() {
+        const result = run();
+        if (result.error) return Promise.resolve({ data: null, error: result.error });
+        const rows = result.data as Row[];
+        return Promise.resolve({ data: rows[0] ?? null, error: null });
+      },
+      then(
+        onFulfilled?: (v: { data: unknown; error: unknown }) => unknown,
+        onRejected?: (e: unknown) => unknown
+      ) {
+        return Promise.resolve(run()).then(onFulfilled, onRejected);
+      },
+    };
+    return api;
+  }
+
+  const client = {
+    auth: {
+      getUser: async () => ({ data: { user: db.user }, error: null }),
+    },
+    rpc: async (fn: string, args?: unknown) => {
+      rpcCalls.push({ fn, args });
+      const orgId = (args as { org_id?: string } | undefined)?.org_id;
+      if (fn === "current_org_role") {
+        return { data: orgId ? (db.roles[orgId] ?? null) : null, error: null };
+      }
+      return { data: null, error: null };
+    },
+    from: (table: string) => builder(table),
+  };
+
+  return {
+    db,
+    client,
+    reset,
+    sessionRow,
+    documentRow,
+    rpcCalls,
+    ORG,
+    OTHER_ORG: "99999999-9999-4999-8999-999999999999",
+    SESSION,
+    DOC,
+    USER,
+  };
+});
+
+vi.mock("@/lib/supabase/server", () => ({
+  createServerSupabase: async () => h.client,
+}));
+
+import {
+  addImportDocument,
+  cancelImportSession,
+  createImportSession,
+  deleteImportDocument,
+  getImportDocuments,
+  getImportSession,
+  getImportSessions,
+  markImportDocumentUploaded,
+  markImportDocumentUploadFailed,
+} from "../supabase/import-actions";
+
+beforeEach(() => {
+  h.reset();
+});
+
+describe("createImportSession", () => {
+  it("crée une session en état collecting pour un owner, org dérivée serveur", async () => {
+    const row = await createImportSession();
+    expect(row.state).toBe("collecting");
+    expect(row.organization_id).toBe(h.ORG);
+    expect(row.created_by).toBe(h.USER);
+    expect(h.db.sessions).toHaveLength(1);
+    expect(h.rpcCalls.at(-1)).toEqual({
+      fn: "current_org_role",
+      args: { org_id: h.ORG },
+    });
+  });
+
+  it("accepte un rôle manager", async () => {
+    h.db.roles[h.ORG] = "manager";
+    const row = await createImportSession();
+    expect(row.organization_id).toBe(h.ORG);
+  });
+
+  it("rejette un utilisateur non authentifié", async () => {
+    h.db.user = null;
+    await expect(createImportSession()).rejects.toThrow("Non authentifié");
+  });
+
+  it("rejette un rôle vendeur", async () => {
+    h.db.roles[h.ORG] = "seller";
+    await expect(createImportSession()).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+    expect(h.db.sessions).toHaveLength(0);
+  });
+
+  it("rejette un utilisateur sans aucune organisation", async () => {
+    h.db.organizations = [];
+    h.db.memberships = [];
+    await expect(createImportSession()).rejects.toThrow(
+      "Aucune organisation"
+    );
+    expect(h.db.sessions).toHaveLength(0);
+  });
+});
+
+describe("getImportSessions / getImportSession", () => {
+  it("retourne les sessions de l'org triées du plus récent au plus ancien", async () => {
+    h.db.sessions = [
+      h.sessionRow({ id: h.SESSION, created_at: "2026-09-29T00:00:00+00:00" }),
+      h.sessionRow({
+        id: "66666666-6666-4666-8666-666666666666",
+        created_at: "2026-09-28T00:00:00+00:00",
+      }),
+    ];
+    const rows = await getImportSessions();
+    expect(rows).toHaveLength(2);
+    expect(rows[0].created_at).toBe("2026-09-29T00:00:00+00:00");
+  });
+
+  it("retourne null pour une session inexistante", async () => {
+    expect(await getImportSession(h.SESSION)).toBeNull();
+  });
+
+  it("rejette un utilisateur non authentifié", async () => {
+    h.db.user = null;
+    await expect(getImportSessions()).rejects.toThrow("Non authentifié");
+  });
+});
+
+describe("addImportDocument", () => {
+  const input = {
+    sessionId: h.SESSION,
+    originalName: "stock-2026.pdf",
+    sourceKind: "pdf",
+    mimeType: "application/pdf",
+    sizeBytes: 1024,
+  } as const;
+
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow()];
+  });
+
+  it("insère la row en uploading avec le chemin Storage exact", async () => {
+    const result = await addImportDocument(input);
+    expect(result.document.state).toBe("uploading");
+    expect(result.document.original_name).toBe("stock-2026.pdf");
+    expect(result.storagePath).toBe(
+      `organizations/${h.ORG}/imports/${h.SESSION}/documents/${result.document.id}/stock-2026.pdf`
+    );
+    expect(result.document.storage_path).toBe(result.storagePath);
+    expect(h.db.documents).toHaveLength(1);
+  });
+
+  it("rejette la session introuvable (RLS ou id incorrect)", async () => {
+    h.db.sessions = [];
+    await expect(addImportDocument(input)).rejects.toThrow(
+      "Session d'import introuvable"
+    );
+  });
+
+  it("rejette un rôle hors owner/manager", async () => {
+    h.db.roles[h.ORG] = "seller";
+    await expect(addImportDocument(input)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+  });
+
+  it("rejette une session d'une autre organisation (aucun accès cross-org)", async () => {
+    h.db.sessions = [h.sessionRow({ organization_id: h.OTHER_ORG })];
+    await expect(addImportDocument(input)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("rejette l'ajout hors phase de collecte", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    await expect(addImportDocument(input)).rejects.toThrow(
+      "Les documents ne peuvent être ajoutés qu'en phase de collecte"
+    );
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("rejette l'ajout sur une session terminée", async () => {
+    h.db.sessions = [h.sessionRow({ state: "completed" })];
+    await expect(addImportDocument(input)).rejects.toThrow(
+      "Les documents ne peuvent être ajoutés qu'en phase de collecte"
+    );
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("accepte plusieurs documents dans une même session", async () => {
+    const first = await addImportDocument(input);
+    const second = await addImportDocument({
+      ...input,
+      originalName: "factures.pdf",
+      sizeBytes: 2048,
+    });
+    expect(first.document.id).not.toBe(second.document.id);
+    expect(first.storagePath).not.toBe(second.storagePath);
+    expect(h.db.documents).toHaveLength(2);
+    expect(
+      h.db.documents.every((d) => d.session_id === h.SESSION)
+    ).toBe(true);
+  });
+
+  it("reste réutilisable : la session demeure en collecting après ajout", async () => {
+    await addImportDocument(input);
+    const session = await getImportSession(h.SESSION);
+    expect(session?.state).toBe("collecting");
+    const resumed = await addImportDocument({
+      ...input,
+      originalName: "reprise.pdf",
+    });
+    expect(resumed.document.state).toBe("uploading");
+    expect(await getImportDocuments(h.SESSION)).toHaveLength(2);
+  });
+
+  it("rejette une taille de fichier au-delà de 25 Mo (zod)", async () => {
+    await expect(
+      addImportDocument({ ...input, sizeBytes: 25 * 1024 * 1024 + 1 })
+    ).rejects.toThrow();
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("rejette un source_kind hors de la liste SQL (zod)", async () => {
+    await expect(
+      addImportDocument({ ...input, sourceKind: "xlsx" as "pdf" })
+    ).rejects.toThrow();
+  });
+
+  it("propage une erreur d'insertion sans créer de document (aucun chemin retourné)", async () => {
+    h.db.insertError = "boom";
+    await expect(addImportDocument(input)).rejects.toThrow(
+      "Erreur ajout document: boom"
+    );
+    expect(h.db.documents).toHaveLength(0);
+  });
+});
+
+describe("markImportDocumentUploaded", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow()];
+    h.db.documents = [h.documentRow()];
+  });
+
+  it("autorise uploading → uploaded", async () => {
+    const row = await markImportDocumentUploaded(h.DOC);
+    expect(row.state).toBe("uploaded");
+  });
+
+  it("refuse une transition hors graphe (parsed → uploaded)", async () => {
+    h.db.documents = [h.documentRow({ state: "parsed" })];
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Transition d'état non autorisée"
+    );
+    expect(h.db.documents[0].state).toBe("parsed");
+  });
+
+  it("rejette un document introuvable", async () => {
+    h.db.documents = [];
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Document d'import introuvable"
+    );
+  });
+});
+
+describe("markImportDocumentUploadFailed", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow()];
+    h.db.documents = [h.documentRow()];
+  });
+
+  it("autorise uploading → failed et enregistre le message", async () => {
+    const row = await markImportDocumentUploadFailed(h.DOC, "Réseau indisponible");
+    expect(row.state).toBe("failed");
+    expect(row.error_message).toBe("Réseau indisponible");
+  });
+
+  it("refuse failed depuis un état terminal (extracted)", async () => {
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    await expect(
+      markImportDocumentUploadFailed(h.DOC, "x")
+    ).rejects.toThrow("Transition d'état non autorisée");
+  });
+});
+
+describe("deleteImportDocument", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow()];
+    h.db.documents = [h.documentRow()];
+  });
+
+  it("supprime un document en uploading", async () => {
+    await deleteImportDocument(h.DOC);
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("supprime un document en failed", async () => {
+    h.db.documents = [h.documentRow({ state: "failed" })];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("refuse la suppression hors des états sûrs", async () => {
+    h.db.documents = [h.documentRow({ state: "parsed" })];
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Suppression non autorisée pour cet état du document"
+    );
+    expect(h.db.documents).toHaveLength(1);
+  });
+
+  it("rejette un document introuvable", async () => {
+    h.db.documents = [];
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Document d'import introuvable"
+    );
+  });
+});
+
+describe("getImportDocuments", () => {
+  it("retourne les documents de la session", async () => {
+    h.db.documents = [h.documentRow(), h.documentRow({ id: h.DOC })];
+    const rows = await getImportDocuments(h.SESSION);
+    expect(rows).toHaveLength(2);
+  });
+
+  it("exclut les documents d'une autre session (aucun rattachement transversal)", async () => {
+    h.db.documents = [
+      h.documentRow(),
+      h.documentRow({
+        id: "77777777-7777-4777-8777-777777777777",
+        session_id: "88888888-8888-4888-8888-888888888888",
+      }),
+    ];
+    const rows = await getImportDocuments(h.SESSION);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(h.DOC);
+  });
+
+  it("rejette un utilisateur non authentifié", async () => {
+    h.db.user = null;
+    await expect(getImportDocuments(h.SESSION)).rejects.toThrow("Non authentifié");
+  });
+});
+
+describe("cancelImportSession", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow()];
+  });
+
+  it("annule une session en collecting (état Phase 1)", async () => {
+    const row = await cancelImportSession(h.SESSION);
+    expect(row.state).toBe("cancelled");
+  });
+
+  it("refuse l'annulation d'une session terminée", async () => {
+    h.db.sessions = [h.sessionRow({ state: "completed" })];
+    await expect(cancelImportSession(h.SESSION)).rejects.toThrow(
+      "Transition d'état non autorisée"
+    );
+    expect(h.db.sessions[0].state).toBe("completed");
+  });
+
+  it("rejette un rôle hors owner/manager", async () => {
+    h.db.roles[h.ORG] = "seller";
+    await expect(cancelImportSession(h.SESSION)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+  });
+});

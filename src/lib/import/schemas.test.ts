@@ -5,7 +5,6 @@ import {
   canTransitionImportDocument,
   canTransitionImportItemStatus,
   canTransitionImportSession,
-  createImportSessionSchema,
   importFieldProvenanceSchema,
   importItemInputSchema,
   importItemMatchSchema,
@@ -184,20 +183,6 @@ describe("importItemMatchSchema", () => {
   });
 });
 
-describe("createImportSessionSchema", () => {
-  it("accepte un organization_id valide", () => {
-    expect(createImportSessionSchema.parse({ organizationId: ORG_ID })).toEqual({
-      organizationId: ORG_ID,
-    });
-  });
-
-  it("rejette un uuid invalide", () => {
-    expect(() =>
-      createImportSessionSchema.parse({ organizationId: "pas-un-uuid" })
-    ).toThrow();
-  });
-});
-
 describe("addImportDocumentSchema", () => {
   const valid = {
     sessionId: SESSION_ID,
@@ -234,6 +219,72 @@ describe("addImportDocumentSchema", () => {
     expect(() =>
       addImportDocumentSchema.parse({ ...valid, originalName: "   " })
     ).toThrow();
+  });
+
+  it("accepte les 8 formats V1 avec extension, MIME et source_kind cohérents", () => {
+    const formats: Array<[string, string, "pdf" | "doc" | "docx" | "md" | "image"]> = [
+      ["catalogue.pdf", "application/pdf", "pdf"],
+      ["contrat.doc", "application/msword", "doc"],
+      ["bon-de-livraison.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+      ["notes.md", "text/markdown", "md"],
+      ["photo-1.jpg", "image/jpeg", "image"],
+      ["photo-2.jpeg", "image/jpeg", "image"],
+      ["etiquette.png", "image/png", "image"],
+      ["visuel.webp", "image/webp", "image"],
+    ];
+    for (const [originalName, mimeType, sourceKind] of formats) {
+      const parsed = addImportDocumentSchema.safeParse({
+        ...valid,
+        originalName,
+        mimeType,
+        sourceKind,
+      });
+      expect(parsed.success, `${originalName} devrait être accepté`).toBe(true);
+    }
+  });
+
+  it("rejette une extension hors des formats V1", () => {
+    expect(() =>
+      addImportDocumentSchema.parse({
+        ...valid,
+        originalName: "classeur.xlsx",
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        sourceKind: "docx",
+      })
+    ).toThrow(/Format de fichier non supporté/);
+  });
+
+  it("rejette un MIME incohérent avec l'extension", () => {
+    expect(() =>
+      addImportDocumentSchema.parse({
+        ...valid,
+        originalName: "facture.pdf",
+        mimeType: "image/png",
+        sourceKind: "pdf",
+      })
+    ).toThrow(/MIME ne correspond pas/);
+  });
+
+  it("rejette un MIME non supporté même avec extension valide", () => {
+    expect(() =>
+      addImportDocumentSchema.parse({
+        ...valid,
+        originalName: "facture.pdf",
+        mimeType: "application/octet-stream",
+        sourceKind: "pdf",
+      })
+    ).toThrow(/MIME ne correspond pas/);
+  });
+
+  it("rejette un source_kind incohérent avec l'extension", () => {
+    expect(() =>
+      addImportDocumentSchema.parse({
+        ...valid,
+        originalName: "facture.pdf",
+        mimeType: "application/pdf",
+        sourceKind: "image",
+      })
+    ).toThrow(/source ne correspond pas/);
   });
 });
 

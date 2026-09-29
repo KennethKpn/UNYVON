@@ -9,6 +9,7 @@ import {
   IMPORT_SESSION_STATES,
   IMPORT_SOURCE_KINDS,
   IMPORT_TARGET_FIELDS,
+  IMPORT_V1_FORMATS,
   type ImportDocumentState,
   type ImportEntityType,
   type ImportItemStatus,
@@ -65,17 +66,24 @@ function importFieldsSchema(entityType: ImportEntityType) {
 // Entrées des server actions du pipeline d'import
 // ---------------------------------------------------------------------------
 
-export const createImportSessionSchema = z.strictObject({
-  organizationId: uuidSchema,
-});
-
-export const addImportDocumentSchema = z.strictObject({
-  sessionId: uuidSchema,
-  originalName: z.string().trim().min(1).max(255),
-  sourceKind: importSourceKindSchema,
-  mimeType: z.string().trim().min(1),
-  sizeBytes: z.number().int().min(1).max(IMPORT_MAX_FILE_BYTES),
-});
+export const addImportDocumentSchema = z
+  .strictObject({
+    sessionId: uuidSchema,
+    originalName: z.string().trim().min(1).max(255),
+    sourceKind: importSourceKindSchema,
+    mimeType: z.string().trim().min(1),
+    sizeBytes: z.number().int().min(1).max(IMPORT_MAX_FILE_BYTES),
+  })
+  .superRefine((value, ctx) => {
+    const issue = importFileIssue(
+      value.originalName,
+      value.mimeType,
+      value.sourceKind
+    );
+    if (issue !== null) {
+      ctx.addIssue({ code: "custom", message: issue });
+    }
+  });
 
 const importItemCommon = {
   sessionId: uuidSchema,
@@ -133,6 +141,32 @@ const STORAGE_PATH_PATTERN = new RegExp(
 export const importStoragePathSchema = z
   .string()
   .regex(STORAGE_PATH_PATTERN, "Chemin de stockage invalide");
+
+// ---------------------------------------------------------------------------
+// Formats V1 : extension ↔ MIME ↔ source_kind doivent être cohérents
+// ---------------------------------------------------------------------------
+
+export function importFileIssue(
+  originalName: string,
+  mimeType: string,
+  sourceKind: string
+): string | null {
+  const ext = originalName.toLowerCase().split(".").pop() ?? "";
+  const format = IMPORT_V1_FORMATS.find((f) => f.extension === ext);
+  if (!format) {
+    return "Format de fichier non supporté (V1 : PDF, DOC, DOCX, MD, JPG, JPEG, PNG, WEBP)";
+  }
+  const mime = mimeType.split(";")[0].trim().toLowerCase();
+  const mimeTypes: readonly string[] = format.mimeTypes;
+  if (!mimeTypes.includes(mime)) {
+    return "Le type MIME ne correspond pas à l'extension du fichier";
+  }
+  const sourceKinds: readonly string[] = format.sourceKinds;
+  if (!sourceKinds.includes(sourceKind)) {
+    return "Le type de source ne correspond pas à l'extension du fichier";
+  }
+  return null;
+}
 
 export function buildImportStoragePath(
   organizationId: string,
