@@ -36,8 +36,6 @@ $$;
 do $$
 declare
   v int;
-  v_qual text;
-  v_check text;
 begin
   -- 1.1 Exactement 4 policies imports_* sur storage.objects
   select count(*) into v from pg_policies
@@ -46,18 +44,37 @@ begin
   if v <> 4 then
     raise exception 'ECHEC : % policies Storage imports (attendu 4)', v;
   end if;
+end $$;
 
-  -- 1.2 Seules politiques d'ecriture pour authenticated (pas de policy
-  --     permissive tierce qui contournerait l'etat 'uploading')
-  select count(*) into v from pg_policies
-   where schemaname = 'storage' and tablename = 'objects'
-     and cmd in ('insert', 'update')
-     and roles @> array['authenticated'];
+-- 1.2 Seules politiques d'ecriture pour authenticated
+--     (pas de policy permissive tierce qui contournerait
+--     l'etat 'uploading')
+do $$
+declare
+  v int;
+begin
+  select count(*) into v
+  from pg_policies
+  where schemaname = 'storage'
+    and tablename = 'objects'
+    and cmd in ('INSERT', 'UPDATE')
+    and roles @> ARRAY['authenticated'::name];
+
   if v <> 2 then
-    raise exception 'ECHEC : % policies insert/update pour authenticated (attendu 2 : imports_insert/update)', v;
+    raise exception
+      'ECHEC : % policies insert/update pour authenticated (attendu 2 : imports_insert/update)',
+      v;
   end if;
-  raise notice 'OK : 4 policies imports_* et 2 seules ecritures authenticated';
 
+  raise notice 'OK : 4 policies imports_* et 2 seules ecritures authenticated';
+end $$;
+
+do $$
+declare
+  v int;
+  v_qual text;
+  v_check text;
+begin
   -- 1.3 INSERT : existence de row + etat 'uploading'
   select with_check into v_check from pg_policies
    where schemaname = 'storage' and tablename = 'objects'
