@@ -14,6 +14,11 @@ import type {
   DatabaseImportSession,
   ImportDocumentState,
 } from "@/lib/import/types";
+import {
+  createDefaultProvider,
+  createDocumentExtractor,
+  type ExtractedDocument,
+} from "@/lib/import/extraction";
 import type { z } from "zod";
 
 type AddImportDocumentInput = z.infer<typeof addImportDocumentSchema>;
@@ -317,4 +322,39 @@ export async function getImportDocuments(
     throw new Error(`Erreur documents d'import: ${error.message}`);
   }
   return (data ?? []) as DatabaseImportDocument[];
+}
+
+// ---------------------------------------------------------------------------
+// Extraction (Phase 4) — Storage → lecture → extraction → structure validée.
+// Lecture seule : aucune écriture DB, aucune mutation d'état.
+// ---------------------------------------------------------------------------
+
+export async function extractImportDocument(
+  documentId: string
+): Promise<ExtractedDocument> {
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const document = await fetchDocument(supabase, documentId);
+  await requireManagerRole(supabase, document.organization_id);
+
+  const { data: blob, error } = await supabase.storage
+    .from("imports")
+    .download(document.storage_path);
+  if (error || !blob) {
+    throw new Error(
+      `Erreur téléchargement document: ${error?.message ?? "objet introuvable"}`
+    );
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+
+  const extractor = createDocumentExtractor({
+    provider: createDefaultProvider(),
+  });
+  return extractor.extract({
+    documentId: document.id,
+    sourceKind: document.source_kind,
+    filename: document.original_name,
+    bytes,
+  });
 }

@@ -51,7 +51,8 @@ export const importItemMatchSchema = z.strictObject({
 
 // Champs valides = IMPORT_TARGET_FIELDS[entityType] (jamais d'invention).
 // Le champ `name` est requis : import_commit ne peut pas créer d'entité sans.
-function importFieldsSchema(entityType: ImportEntityType) {
+// Exporté pour la validation de la sortie d'extraction (Phase 4).
+export function importFieldsSchema(entityType: ImportEntityType) {
   return z
     .partialRecord(
       z.enum(IMPORT_TARGET_FIELDS[entityType]),
