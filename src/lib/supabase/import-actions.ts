@@ -8,6 +8,7 @@ import {
   buildImportStoragePath,
   canTransitionImportDocument,
   canTransitionImportSession,
+  importStoragePathSchema,
 } from "@/lib/import/schemas";
 import type {
   DatabaseImportDocument,
@@ -188,6 +189,11 @@ export async function cancelImportSession(
 // Documents (collecte)
 // ---------------------------------------------------------------------------
 
+// Métadonnées déclarées AVANT upload : originalName/sourceKind/mimeType/
+// sizeBytes validés ici (zod, cohérence extension↔MIME↔source_kind) mais non
+// vérifiables sur les octets — l'upload va directement navigateur → Storage.
+// Garanties par niveau (client / Storage / à vérifier après) : documentation
+// dans docs/IMPORT_STORAGE_INTEGRITY.md § 3.
 export async function addImportDocument(
   input: AddImportDocumentInput
 ): Promise<{ document: DatabaseImportDocument; storagePath: string }> {
@@ -287,6 +293,18 @@ export async function markImportDocumentUploadFailed(
   return data as DatabaseImportDocument;
 }
 
+// Suppression document — aucun lien transactionnel PostgreSQL ↔ Storage.
+// Ordre choisi (compensation explicite) :
+//   1. pré-vérifications (auth, rôle, état, chemin Storage) — aucune mutation ;
+//   2. suppression de la row import_documents (source de vérité) ;
+//   3. suppression de l'objet Storage.
+// Si (3) échoue → compensation : la row complète est réinsérée (lue en 1) et
+// l'erreur est retournée ; l'état « row + objet » est restauré et la
+// suppression devient rejouable. Si la réinsertion échoue aussi (double
+// panne), l'objet peut rester orphelin : l'erreur porte le chemin pour le
+// nettoyage. L'ordre inverse (Storage d'abord) est rejeté : un échec
+// PostgreSQL détruirait alors un fichier encore référencé, sans compensation
+// possible (son contenu n'est pas reconstituable).
 export async function deleteImportDocument(documentId: string): Promise<void> {
   const supabase = await createServerSupabase();
   await requireAuth(supabase);
@@ -297,13 +315,45 @@ export async function deleteImportDocument(documentId: string): Promise<void> {
   if (!DELETABLE_DOCUMENT_STATES.includes(document.state)) {
     throw new Error("Suppression non autorisée pour cet état du document");
   }
+  assertOwnedStoragePath(document);
 
   const { error } = await supabase
     .from("import_documents")
     .delete()
     .eq("id", documentId);
   if (error) {
+    // Échec avant toute mutation : l'objet Storage est intact.
     throw new Error(`Erreur suppression document: ${error.message}`);
+  }
+
+  const { error: storageError } = await supabase.storage
+    .from("imports")
+    .remove([document.storage_path]);
+  if (!storageError) return;
+
+  const { error: restoreError } = await supabase
+    .from("import_documents")
+    .insert(document);
+  if (!restoreError) {
+    throw new Error(
+      `Objet Storage non supprimé (${storageError.message}) : document restauré, suppression à rejouer`
+    );
+  }
+  throw new Error(
+    `Objet Storage orphelin possible [${document.storage_path}] : suppression échouée (${storageError.message}) et restauration impossible (${restoreError.message})`
+  );
+}
+
+// N'efface que l'objet appartenant À CE document : chemin conforme à la
+// structure imposée par les policies et segments org/session/document identiques
+// à ceux de la row (jamais un chemin lu « au hasard »).
+function assertOwnedStoragePath(document: DatabaseImportDocument): void {
+  const prefix = `organizations/${document.organization_id}/imports/${document.session_id}/documents/${document.id}/`;
+  const valid =
+    importStoragePathSchema.safeParse(document.storage_path).success &&
+    document.storage_path.startsWith(prefix);
+  if (!valid) {
+    throw new Error("Chemin Storage du document invalide");
   }
 }
 

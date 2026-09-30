@@ -17,6 +17,7 @@ const h = vi.hoisted(() => {
   const USER = "55555555-5555-4555-8555-555555555555";
 
   const rpcCalls: Array<{ fn: string; args: unknown }> = [];
+  const storageCalls: Array<{ bucket: string; paths: string[] }> = [];
 
   const db = {
     sessions: [] as Row[],
@@ -28,6 +29,8 @@ const h = vi.hoisted(() => {
     user: { id: USER } as { id: string } | null,
     insertError: null as string | null,
     updateError: null as string | null,
+    deleteError: null as string | null,
+    removeError: null as string | null,
   };
 
   const TABLES: Record<string, Row[]> = {
@@ -60,7 +63,10 @@ const h = vi.hoisted(() => {
     db.user = { id: USER };
     db.insertError = null;
     db.updateError = null;
+    db.deleteError = null;
+    db.removeError = null;
     rpcCalls.length = 0;
+    storageCalls.length = 0;
   }
 
   function sessionRow(overrides: Row = {}): Row {
@@ -84,7 +90,7 @@ const h = vi.hoisted(() => {
       source_kind: "pdf",
       mime_type: "application/pdf",
       size_bytes: 1024,
-      storage_path: "placeholder",
+      storage_path: `organizations/${ORG}/imports/${SESSION}/documents/${DOC}/stock.pdf`,
       state: "uploading",
       page_count: null,
       error_message: null,
@@ -135,6 +141,7 @@ const h = vi.hoisted(() => {
         return { data: rows, error: null };
       }
       if (st.op === "delete") {
+        if (db.deleteError) return { data: null, error: { message: db.deleteError } };
         const tableRows = TABLES[table] ?? [];
         const toRemove = new Set(selectedRows());
         for (let i = tableRows.length - 1; i >= 0; i--) {
@@ -218,6 +225,17 @@ const h = vi.hoisted(() => {
       return { data: null, error: null };
     },
     from: (table: string) => builder(table),
+    storage: {
+      from: (bucket: string) => ({
+        remove: async (paths: string[]) => {
+          storageCalls.push({ bucket, paths });
+          return {
+            data: null,
+            error: db.removeError ? { message: db.removeError } : null,
+          };
+        },
+      }),
+    },
   };
 
   return {
@@ -227,6 +245,7 @@ const h = vi.hoisted(() => {
     sessionRow,
     documentRow,
     rpcCalls,
+    storageCalls,
     ORG,
     OTHER_ORG: "99999999-9999-4999-8999-999999999999",
     SESSION,
@@ -485,23 +504,81 @@ describe("deleteImportDocument", () => {
     h.db.documents = [h.documentRow()];
   });
 
-  it("supprime un document en uploading", async () => {
+  const expectedPath = `organizations/${h.ORG}/imports/${h.SESSION}/documents/${h.DOC}/stock.pdf`;
+
+  it("supprime la row ET l'objet Storage (aucun objet orphelin)", async () => {
     await deleteImportDocument(h.DOC);
     expect(h.db.documents).toHaveLength(0);
+    expect(h.storageCalls).toEqual([
+      { bucket: "imports", paths: [expectedPath] },
+    ]);
   });
 
-  it("supprime un document en failed", async () => {
+  it("supprime un document en failed (row + objet)", async () => {
     h.db.documents = [h.documentRow({ state: "failed" })];
     await deleteImportDocument(h.DOC);
     expect(h.db.documents).toHaveLength(0);
+    expect(h.storageCalls).toHaveLength(1);
+    expect(h.storageCalls[0].paths).toEqual([expectedPath]);
   });
 
-  it("refuse la suppression hors des états sûrs", async () => {
+  it("supprime un document en uploaded (row + objet)", async () => {
+    h.db.documents = [h.documentRow({ state: "uploaded" })];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.documents).toHaveLength(0);
+    expect(h.storageCalls).toHaveLength(1);
+  });
+
+  it("échec Storage → la row est restaurée (compensation) et l'erreur est retournée", async () => {
+    h.db.removeError = "storage down";
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "document restauré, suppression à rejouer"
+    );
+    expect(h.storageCalls).toHaveLength(1);
+    expect(h.db.documents).toHaveLength(1);
+    expect(h.db.documents[0].id).toBe(h.DOC);
+    expect(h.db.documents[0].state).toBe("uploading");
+    expect(h.db.documents[0].storage_path).toBe(expectedPath);
+  });
+
+  it("échec PostgreSQL → aucun appel Storage (objet intact, rien à compenser)", async () => {
+    h.db.deleteError = "db down";
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Erreur suppression document: db down"
+    );
+    expect(h.storageCalls).toHaveLength(0);
+    expect(h.db.documents).toHaveLength(1);
+  });
+
+  it("double panne (Storage + restauration) → erreur portant le chemin de nettoyage", async () => {
+    h.db.removeError = "storage down";
+    h.db.insertError = "db down";
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      `Objet Storage orphelin possible [${expectedPath}]`
+    );
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("chemin Storage ne correspondant pas au document → refus avant toute mutation", async () => {
+    h.db.documents = [
+      h.documentRow({
+        storage_path: `organizations/${h.ORG}/imports/${h.SESSION}/documents/44444444-4444-4444-4444-444444444444/stock.pdf`,
+      }),
+    ];
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Chemin Storage du document invalide"
+    );
+    expect(h.db.documents).toHaveLength(1);
+    expect(h.storageCalls).toHaveLength(0);
+  });
+
+  it("refuse la suppression hors des états sûrs (aucun appel Storage)", async () => {
     h.db.documents = [h.documentRow({ state: "parsed" })];
     await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
       "Suppression non autorisée pour cet état du document"
     );
     expect(h.db.documents).toHaveLength(1);
+    expect(h.storageCalls).toHaveLength(0);
   });
 
   it("rejette un document introuvable", async () => {
@@ -509,6 +586,22 @@ describe("deleteImportDocument", () => {
     await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
       "Document d'import introuvable"
     );
+    expect(h.storageCalls).toHaveLength(0);
+  });
+
+  it("rejette un rôle hors owner/manager avant toute mutation", async () => {
+    h.db.roles[h.ORG] = "seller";
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+    expect(h.db.documents).toHaveLength(1);
+    expect(h.storageCalls).toHaveLength(0);
+  });
+
+  it("rejette un utilisateur non authentifié", async () => {
+    h.db.user = null;
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow("Non authentifié");
+    expect(h.storageCalls).toHaveLength(0);
   });
 });
 
