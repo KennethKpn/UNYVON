@@ -1,5 +1,6 @@
 import { deflateRawSync, deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
+import { MAX_DECOMPRESSED_BYTES } from "./decompression";
 import { createDocumentExtractor, type Provider } from "./extractor";
 import type { ExtractedDocument } from "./types";
 
@@ -344,6 +345,38 @@ describe("statuts d'extraction", () => {
   it("FAILED : aucun contenu exploitable", async () => {
     const doc = await run("md", new Uint8Array(0));
     expect(doc.status).toBe("FAILED");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 13. Décompression — limite documentaire anti zip-bomb
+// ---------------------------------------------------------------------------
+
+describe("décompression (anti zip-bomb)", () => {
+  it("PDF : un flux dont la sortie dépasse MAX_DECOMPRESSED_BYTES est bloqué", async () => {
+    const bomb = "A".repeat(MAX_DECOMPRESSED_BYTES + 1024);
+    const doc = await run("pdf", makePdfBytes([bomb], true));
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("DECOMPRESSION_LIMIT_EXCEEDED");
+    expect(doc.pages).toHaveLength(0);
+  });
+
+  it("DOCX : word/document.xml dont la sortie dépasse la limite est bloqué", async () => {
+    const bomb = "B".repeat(MAX_DECOMPRESSED_BYTES + 1024);
+    const doc = await run("docx", makeDocxBytes([bomb], true));
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("DECOMPRESSION_LIMIT_EXCEEDED");
+    expect(doc.pages).toHaveLength(0);
+  });
+
+  it("PDF : plusieurs flux ne peuvent pas dépasser le budget global en cumulant", async () => {
+    // 9 flux × 4 MiB = 36 MiB > 32 MiB : chaque flux seul passe sous la
+    // limite, seule la somme est bloquée → le budget est bien global.
+    // (4 MiB par flux : sous la limite de pile du regex de décodage.)
+    const chunk = "C".repeat(4 * 1024 * 1024);
+    const doc = await run("pdf", makePdfBytes(Array.from({ length: 9 }, () => chunk), true));
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("DECOMPRESSION_LIMIT_EXCEEDED");
   });
 });
 

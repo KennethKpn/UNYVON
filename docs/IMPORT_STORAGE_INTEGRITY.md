@@ -95,7 +95,38 @@ limite de corps 1 Mo face aux 25 Mo du bucket).
   (`markImportDocumentUploaded`).
 - `page_count`, `processed_at` : renseignés par l'extraction, jamais déclarés.
 
-## 4. Limitations connues
+## 4. Limite de décompression documentaire (anti zip-bomb)
+
+`IMPORT_MAX_FILE_BYTES` (25 Mo) borne le fichier **entrant**. Une entrée
+compressée peut produire une sortie bien plus grande : une simple limite par
+flux ne suffit pas, car un PDF contient plusieurs flux FlateDecode.
+
+Une limite canonique et indépendante s'applique donc à la **sortie décompressée**,
+par document :
+
+| Constante | Valeur | Portée |
+|---|---|---|
+| `MAX_DECOMPRESSED_BYTES` | 32 MiB | budget **documentaire** unique, partagé par toutes les décompressions (PDF multi-flux, DOCX) |
+
+- Budget créé **une fois par document** (`createDecompressionBudget()`), puis
+  partagé par tous les flux : impossible de le contourner en cumulant.
+- Chaque décompression reçoit au maximum le budget restant via
+  `maxOutputLength` (Node zlib) : en cas de dépassement, **aucune sortie n'est
+  produite** et le budget signale `DECOMPRESSION_BUDGET_EXCEEDED`.
+- Après chaque décompression réussie, le budget est décrémenté des octets
+  réellement produits.
+- L'adaptateur produit une extraction **contrôlée/échouée**
+  (`DECOMPRESSION_LIMIT_EXCEEDED`) : jamais d'allocation supplémentaire.
+- Le fallback PDF utilise le **même** budget (jamais recréé, jamais
+  redécompressé sans limite).
+
+Aucune dépendance externe : `node:zlib` (`inflateSync` / `inflateRawSync`).
+
+Tests : `src/lib/import/extraction/decompression.test.ts` (mécanisme) et
+`src/lib/import/extraction/extractor.test.ts` (PDF bloqué, DOCX bloqué,
+cumul multi-flux).
+
+## 5. Limitations connues
 
 1. Double panne à la suppression (§ 1) : orphelin possible, chemin exposé dans l'erreur.
 2. Aucune réconciliation taille/MIME réel (§ 3).

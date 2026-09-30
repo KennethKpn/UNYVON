@@ -123,6 +123,9 @@ async function runExtraction(
 
   // --- Formats texte : lecture locale puis structuration optionnelle --------
   const extraction = extractTextContent(input.sourceKind, input.bytes);
+  if (extraction?.error) {
+    return fail(extraction.error.code, extraction.error.message);
+  }
   if (!extraction || extraction.pages.length === 0) {
     return fail("UNREADABLE_DOCUMENT", "Document illisible : aucun texte extrait");
   }

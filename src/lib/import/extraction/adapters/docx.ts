@@ -1,9 +1,16 @@
-import { inflateRawSync } from "node:zlib";
+import type { DecompressionBudget } from "../decompression";
 
 // ---------------------------------------------------------------------------
 // Lecteur DOCX (ZIP) minimal sans dépendance : lit word/document.xml
 // (méthodes 0 = store et 8 = deflate) et en extrait le texte des paragraphes.
+// La décompression deflate passe par le budget documentaire partagé : une
+// entrée dont la sortie dépasse le budget restant est bloquée.
 // ---------------------------------------------------------------------------
+
+interface EntryResult {
+  data: Buffer | null;
+  budgetExceeded: boolean;
+}
 
 function xmlUnescape(text: string): string {
   return text
@@ -25,7 +32,11 @@ function documentXmlToText(xml: string): string {
   return lines.join("\n");
 }
 
-function findEntry(buf: Buffer, name: string): Buffer | null {
+function findEntry(
+  buf: Buffer,
+  name: string,
+  budget: DecompressionBudget
+): EntryResult {
   let eocdOffset = -1;
   const minOffset = Math.max(0, buf.length - 22 - 65535);
   for (let i = buf.length - 22; i >= minOffset; i--) {
@@ -34,7 +45,7 @@ function findEntry(buf: Buffer, name: string): Buffer | null {
       break;
     }
   }
-  if (eocdOffset < 0) return null;
+  if (eocdOffset < 0) return { data: null, budgetExceeded: false };
 
   const entryCount = buf.readUInt16LE(eocdOffset + 10);
   let offset = buf.readUInt32LE(eocdOffset + 16);
@@ -50,29 +61,41 @@ function findEntry(buf: Buffer, name: string): Buffer | null {
     const entryName = buf.toString("utf8", offset + 46, offset + 46 + nameLength);
 
     if (entryName === name) {
-      if (localOffset + 30 > buf.length) return null;
+      if (localOffset + 30 > buf.length) return { data: null, budgetExceeded: false };
       const localNameLength = buf.readUInt16LE(localOffset + 26);
       const localExtraLength = buf.readUInt16LE(localOffset + 28);
       const dataStart = localOffset + 30 + localNameLength + localExtraLength;
       const data = buf.subarray(dataStart, dataStart + compressedSize);
-      if (method === 0) return Buffer.from(data);
+      if (method === 0) return { data: Buffer.from(data), budgetExceeded: false };
       if (method === 8) {
-        try {
-          return inflateRawSync(data);
-        } catch {
-          return null;
+        const outcome = budget.inflate(data, { raw: true });
+        if (!outcome.ok) {
+          return {
+            data: null,
+            budgetExceeded: outcome.reason === "DECOMPRESSION_BUDGET_EXCEEDED",
+          };
         }
+        return { data: outcome.data ?? null, budgetExceeded: false };
       }
-      return null;
+      return { data: null, budgetExceeded: false };
     }
     offset += 46 + nameLength + extraLength + commentLength;
   }
-  return null;
+  return { data: null, budgetExceeded: false };
 }
 
-export function extractDocxText(bytes: Uint8Array): string | null {
+export interface DocxExtractionResult {
+  text: string | null;
+  budgetExceeded: boolean;
+}
+
+export function extractDocxText(
+  bytes: Uint8Array,
+  budget: DecompressionBudget
+): DocxExtractionResult {
   const buf = Buffer.from(bytes);
-  const xml = findEntry(buf, "word/document.xml");
-  if (!xml) return null;
-  return documentXmlToText(xml.toString("utf8"));
+  const entry = findEntry(buf, "word/document.xml", budget);
+  if (entry.budgetExceeded) return { text: null, budgetExceeded: true };
+  if (!entry.data) return { text: null, budgetExceeded: false };
+  return { text: documentXmlToText(entry.data.toString("utf8")), budgetExceeded: false };
 }

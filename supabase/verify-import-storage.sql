@@ -123,6 +123,7 @@ declare
   v_sid    uuid;
   v_did    uuid := gen_random_uuid();
   v_path   text;
+  v_reupload_path text;
   v_count  int;
 begin
   select user_id, organization_id into v_user, v_org
@@ -187,20 +188,30 @@ begin
     raise exception 'ECHEC : transition uploading -> uploaded refusee par RLS (%)', v_count;
   end if;
 
-  -- 2.5 Re-upload (INSERT du meme chemin) REFUSE apres 'uploaded'
+  -- 2.5 Re-upload sur NOUVEAU chemin REFUSE apres 'uploaded'
+  --     (nouveau chemin : la seule cause possible du refus est la policy RLS,
+  --     pas une contrainte d'unicite)
+  v_reupload_path := 'organizations/' || v_org || '/imports/' || v_sid
+                   || '/documents/' || v_did || '/stock-test-reupload.pdf';
   begin
     insert into storage.objects (bucket_id, name, owner, metadata)
-    values ('imports', v_path, v_user, '{"mimetype":"application/pdf"}'::jsonb);
+    values ('imports', v_reupload_path, v_user, '{"mimetype":"application/pdf"}'::jsonb);
     reset role;
     perform public.test_set_auth(null);
-    raise exception 'ECHEC : re-upload accepte apres uploaded (contenu modifiable)';
+    raise exception 'ECHEC : re-upload sur nouveau chemin accepté après uploaded';
   exception when others then
     if sqlerrm like 'ECHEC%' then
       raise;
     end if;
-    reset role;
-    perform public.test_set_auth(null);
-    raise notice 'OK : re-upload refuse apres uploaded (%)', sqlerrm;
+    if sqlstate = '42501' then
+      reset role;
+      perform public.test_set_auth(null);
+      raise notice 'OK : nouveau chemin bloqué par la policy après uploaded (%)', sqlerrm;
+    else
+      reset role;
+      perform public.test_set_auth(null);
+      raise exception 'ECHEC : erreur inattendue re-upload (%) sqlstate %', sqlerrm, sqlstate;
+    end if;
   end;
 
   -- 2.6 UPDATE objet REFUSE apres 'uploaded' (0 ligne : policy USING fausse)

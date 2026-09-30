@@ -1,10 +1,18 @@
-import { inflateSync } from "node:zlib";
+import type { DecompressionBudget } from "../decompression";
 import type { ExtractedPage } from "../types";
 
 // ---------------------------------------------------------------------------
 // Extracteur PDF minimal (sans dépendance) : conserve la pagination réelle
 // via les objets /Type /Page et leurs flux /Contents (FlateDecode supporté).
+// Toutes les décompressions passent par le budget documentaire partagé :
+// un flux dont la sortie dépasse le budget restant est bloqué et arrête
+// proprement l'extraction (aucune sortie exploitable n'est produite).
 // ---------------------------------------------------------------------------
+
+interface StreamResult {
+  text: string;
+  budgetExceeded: boolean;
+}
 
 function decodePdfString(raw: string): string {
   return raw.replace(/\\([nrtbf()\\]|(\d{1,3}))/g, (_match, esc: string) => {
@@ -21,18 +29,21 @@ function decodePdfString(raw: string): string {
   });
 }
 
-function streamContent(objectBody: string): string {
+function streamContent(objectBody: string, budget: DecompressionBudget): StreamResult {
   const match = objectBody.match(/stream\r?\n([\s\S]*?)\r?\nendstream/);
-  if (!match) return "";
-  let data = Buffer.from(match[1], "latin1");
+  if (!match) return { text: "", budgetExceeded: false };
+  const data = Buffer.from(match[1], "latin1");
   if (/\/Filter\s*\/FlateDecode/.test(objectBody.slice(0, match.index ?? 0))) {
-    try {
-      data = inflateSync(data);
-    } catch {
-      return "";
+    const outcome = budget.inflate(data);
+    if (!outcome.ok) {
+      return {
+        text: "",
+        budgetExceeded: outcome.reason === "DECOMPRESSION_BUDGET_EXCEEDED",
+      };
     }
+    return { text: outcome.data?.toString("latin1") ?? "", budgetExceeded: false };
   }
-  return data.toString("latin1");
+  return { text: data.toString("latin1"), budgetExceeded: false };
 }
 
 function decodeTextOperators(content: string): string {
@@ -54,10 +65,18 @@ function decodeTextOperators(content: string): string {
   return fragments.join(" ");
 }
 
-export function extractPdfPages(bytes: Uint8Array): ExtractedPage[] {
+export interface PdfExtractionResult {
+  pages: ExtractedPage[];
+  budgetExceeded: boolean;
+}
+
+export function extractPdfPages(
+  bytes: Uint8Array,
+  budget: DecompressionBudget
+): PdfExtractionResult {
   const raw = Buffer.from(bytes);
   const source = raw.toString("latin1");
-  if (!source.startsWith("%PDF")) return [];
+  if (!source.startsWith("%PDF")) return { pages: [], budgetExceeded: false };
 
   const objects: Array<{ num: number; body: string }> = [];
   const objRe = /(\d+)\s+0\s+obj([\s\S]*?)endobj/g;
@@ -69,22 +88,43 @@ export function extractPdfPages(bytes: Uint8Array): ExtractedPage[] {
   const pages: ExtractedPage[] = [];
   const pageObjects = objects.filter((obj) => /\/Type\s*\/Page[\s/]/.test(obj.body));
 
+  let budgetExceeded = false;
   pageObjects.forEach((pageObject, index) => {
+    if (budgetExceeded) return;
     const contentsRef = pageObject.body.match(/\/Contents\s+(\d+)\s+0\s+R/);
     let text = "";
     if (contentsRef) {
       const contentObject = objects.find((o) => o.num === Number(contentsRef[1]));
-      if (contentObject) text = decodeTextOperators(streamContent(contentObject.body));
+      if (contentObject) {
+        const result = streamContent(contentObject.body, budget);
+        if (result.budgetExceeded) {
+          budgetExceeded = true;
+          return;
+        }
+        text = decodeTextOperators(result.text);
+      }
     }
     if (text.trim()) pages.push({ page: index + 1, text: text.trim() });
   });
 
-  if (pages.length === 0) {
-    const fallback = decodeTextOperators(
-      objects.map((o) => streamContent(o.body)).join("\n")
-    );
-    if (fallback.trim()) pages.push({ page: 1, text: fallback.trim() });
+  // Fallback : même budget documentaire, jamais recréé ni redécompressé sans
+  // limite. Il ne consomme que ce qui reste, donc le total du document reste
+  // borné par MAX_DECOMPRESSED_BYTES.
+  if (!budgetExceeded && pages.length === 0) {
+    const fallbackParts: string[] = [];
+    for (const obj of objects) {
+      const result = streamContent(obj.body, budget);
+      if (result.budgetExceeded) {
+        budgetExceeded = true;
+        break;
+      }
+      fallbackParts.push(result.text);
+    }
+    if (!budgetExceeded) {
+      const fallback = decodeTextOperators(fallbackParts.join("\n"));
+      if (fallback.trim()) pages.push({ page: 1, text: fallback.trim() });
+    }
   }
 
-  return pages;
+  return { pages, budgetExceeded };
 }
