@@ -41,7 +41,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object(
     'sub', uid::text,
     'role', 'authenticated'
-  )::text, false);
+  )::text, true);
 end;
 $$;
 
