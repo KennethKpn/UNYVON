@@ -11,6 +11,14 @@
 -- Chaque écart lève une exception → script en échec = migration non conforme.
 -- ============================================================================
 
+-- ---------------------------------------------------------------------------
+-- REVERSIBILITY : ce script ne doit laisser aucune mutation métier ni helper
+-- de test persistant. Toute la vérification est exécutée dans une transaction
+-- unique ; le ROLLBACK final annule aussi la création du helper temporaire.
+-- ---------------------------------------------------------------------------
+
+begin;
+
 -- Helper : équivalent auth.uid() pour les tests (même définition que
 -- verify-rls.sql, idempotente).
 create or replace function public.test_set_auth(uid uuid)
@@ -23,7 +31,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object(
     'sub', uid::text,
     'role', 'authenticated'
-  )::text, false);
+  )::text, true);
 end;
 $$;
 
@@ -129,8 +137,6 @@ end $$;
 -- ---------------------------------------------------------------------------
 -- 2. Aller-retour écriture impersonné (annulé par ROLLBACK)
 -- ---------------------------------------------------------------------------
-begin;
-
 do $$
 declare
   v_user  uuid;
@@ -210,3 +216,13 @@ begin
 end $$;
 
 rollback;
+
+-- Contrôle post-rollback : le helper temporaire ne doit pas avoir survécu.
+do $$
+begin
+  if to_regprocedure('public.test_set_auth(uuid)') is null then
+    raise notice 'OK : le helper public.test_set_auth(uuid) n''a pas survécu au ROLLBACK';
+  else
+    raise exception 'ECHEC DE REVERSIBILITE : public.test_set_auth(uuid) existe encore après ROLLBACK';
+  end if;
+end $$;
