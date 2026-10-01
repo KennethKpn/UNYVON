@@ -1,0 +1,181 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+
+// ---------------------------------------------------------------------------
+// Reversibilite des scripts de verification (finding PR #1 sur test_set_auth).
+// public.test_set_auth est SECURITY DEFINER : laisse installe, il est
+// appelable par PUBLIC (defaut Postgres sur le schema public) et permet
+// d'usurper n'importe quel `sub` via request.jwt.claims => contournement RLS.
+//
+// Sans base locale (pas de Docker dans ce depot), les scripts SQL ne sont pas
+// executes par `npm test` : on verrouille donc leur STRUCTURE, exactement
+// comme storage-integrity.test.ts verrouille la definition effective des
+// policies. Un retour en arriere (helper cree hors transaction, ou cleanup
+// supprime) fait echouer ces tests.
+// ---------------------------------------------------------------------------
+
+const SUPABASE_DIR = path.join(process.cwd(), "supabase");
+
+const HELPER_DECL = "create or replace function public.test_set_auth(uid uuid)";
+const HELPER_DROP = "drop function if exists public.test_set_auth(uuid)";
+const HELPER_PROBE = "to_regprocedure('public.test_set_auth(uuid)')";
+
+const REVERSIBLE_SCRIPTS = [
+  "verify-import.sql",
+  "verify-import-storage.sql",
+  "verify-rls.sql",
+] as const;
+
+// verify-rls.sql est le SEUL des trois a muter des donnees reelles
+// (`update public.organizations set name = 'PIRATAGE'`). Ce bloc verrouille
+// que cette mutation est enclose par la transaction : hors transaction, une
+// regression RLS ecrirait durablement 'PIRATAGE' dans la base.
+const DATA_MUTATION: Record<(typeof REVERSIBLE_SCRIPTS)[number], string | null> = {
+  "verify-import.sql": null,
+  "verify-import-storage.sql": null,
+  "verify-rls.sql": "update public.organizations",
+};
+
+function readScript(file: string): string {
+  return readFileSync(path.join(SUPABASE_DIR, file), "utf8");
+}
+
+// Index de la 1re occurrence d'une ligne donnee (indice non trimme), -1 sinon.
+function firstIndexOfLine(sql: string, line: string): number {
+  const index = sql.indexOf(line);
+  return index;
+}
+
+// Chaque script conserve sa convention d'encodage (verify-import-storage.sql
+// est volontairement ASCII) : le message d'echec est donc verrouille
+// script par script, jamais suppose identique.
+const SURVIVAL_MESSAGE: Record<(typeof REVERSIBLE_SCRIPTS)[number], string> = {
+  "verify-import.sql":
+    "ECHEC : le helper public.test_set_auth(uuid) a survécu à la vérification",
+  "verify-import-storage.sql":
+    "ECHEC : le helper public.test_set_auth(uuid) a survecu a la verification",
+  "verify-rls.sql":
+    "ECHEC : le helper public.test_set_auth(uuid) a survécu à la vérification",
+};
+
+describe.each(REVERSIBLE_SCRIPTS)("%s — reversibilite du helper test_set_auth", (file) => {
+  const sql = readScript(file);
+
+  it("declare bien le helper SECURITY DEFINER (l'objet a rendre reversible)", () => {
+    expect(sql).toContain(HELPER_DECL);
+    expect(sql).toContain("security definer");
+    expect(sql).toContain("set search_path = public");
+  });
+
+  it("ouvre la transaction AVANT la creation du helper", () => {
+    const beginIndex = firstIndexOfLine(sql, "begin;");
+    const declIndex = firstIndexOfLine(sql, HELPER_DECL);
+    expect(beginIndex).toBeGreaterThan(-1);
+    expect(declIndex).toBeGreaterThan(-1);
+    expect(beginIndex).toBeLessThan(declIndex);
+  });
+
+  it("ferme la transaction par rollback APRES la derniere utilisation du helper", () => {
+    const rollbackIndex = sql.lastIndexOf("rollback;");
+    const lastUseIndex = sql.lastIndexOf("public.test_set_auth(null)");
+    expect(rollbackIndex).toBeGreaterThan(-1);
+    expect(lastUseIndex).toBeGreaterThan(-1);
+    expect(rollbackIndex).toBeGreaterThan(lastUseIndex);
+  });
+
+  it("n'a qu'un seul rollback (le helper ne survit pas a une transaction rejouee)", () => {
+    const rollbacks = sql.match(/^\s*rollback;\s*$/gim) ?? [];
+    expect(rollbacks).toHaveLength(1);
+  });
+
+  it("supprime explicitement le helper apres le rollback (auto-soignage)", () => {
+    expect(sql).toContain(HELPER_DROP);
+    expect(sql.indexOf(HELPER_DROP)).toBeGreaterThan(sql.lastIndexOf("rollback;"));
+  });
+
+  it("prouve l'absence effective du helper, sans se contenter de la supposer", () => {
+    expect(sql).toContain(HELPER_PROBE);
+    expect(sql).toContain(SURVIVAL_MESSAGE[file]);
+  });
+
+  it("ne laisse aucun bloc BEGIN/COMMIT imbrique refermant la transaction", () => {
+    // Un COMMIT interne persisterait le helper ; seul le ROLLBACK final est admis.
+    expect(sql).not.toMatch(/^\s*commit;\s*$/im);
+  });
+
+  it("encadre chaque mutation de donnees par la transaction annulee", () => {
+    const mutation = DATA_MUTATION[file];
+    if (mutation === null) return; // script purement lecture
+    const beginIndex = firstIndexOfLine(sql, "begin;");
+    const mutationIndex = firstIndexOfLine(sql, mutation);
+    const rollbackIndex = sql.lastIndexOf("rollback;");
+    expect(mutationIndex).toBeGreaterThan(-1);
+    // La mutation doit etre APRES le BEGIN et AVANT le ROLLBACK final.
+    expect(beginIndex).toBeLessThan(mutationIndex);
+    expect(mutationIndex).toBeLessThan(rollbackIndex);
+  });
+
+  it("ne recree pas le helper apres le rollback (fenetre de persistance)", () => {
+    // Une redeclaration posterieure au ROLLBACK echouerait hors transaction
+    // et reinstallerait durablement le helper SECURITY DEFINER.
+    expect(sql.lastIndexOf(HELPER_DECL)).toBeLessThan(sql.lastIndexOf("rollback;"));
+  });
+
+  it("configure le contexte JWT en LOCAL (SET LOCAL), donc annule par le ROLLBACK", () => {
+    // Le 3e argument de set_config doit valoir `true` (SET LOCAL). Avec `false`
+    // (SET sessionnel), un run interrompu laisserait un `sub` forge dans la
+    // session : le contexte d'impersonation survivrait au rollback.
+    expect(sql).toMatch(/perform\s+set_config\(\s*'request\.jwt\.claims'/);
+    expect(sql).toMatch(/\)\s*::\s*text\s*,\s*true\s*\)\s*;/);
+    // Aucun set_config sessionnel ne doit subsister sur request.jwt.claims.
+    expect(sql).not.toMatch(/'request\.jwt\.claims'[\s\S]{0,300}?::\s*text\s*,\s*false\s*\)\s*;/);
+  });
+
+  it("n'appelle le helper qu'a l'interieur de la transaction (SET LOCAL exige un bloc)", () => {
+    // hors transaction, `SET LOCAL` est sans effet : l'impersonationechouerait
+    // silencieusement et les tests RLS tourneraient sous le role reellement
+    // connecte (faux positifs). Le helper est donc valide avant le premier
+    // appel, et le ROLLBACK referme la transaction apres le dernier.
+    const declIndex = firstIndexOfLine(sql, HELPER_DECL);
+    const firstCallIndex = sql.indexOf("perform public.test_set_auth(");
+    const rollbackIndex = sql.lastIndexOf("rollback;");
+    expect(declIndex).toBeGreaterThan(-1);
+    expect(firstCallIndex).toBeGreaterThan(-1);
+    expect(rollbackIndex).toBeGreaterThan(-1);
+    // BEGIN avant la declaration ET avant le premier appel.
+    expect(firstIndexOfLine(sql, "begin;")).toBeLessThan(declIndex);
+    expect(firstIndexOfLine(sql, "begin;")).toBeLessThan(firstCallIndex);
+    // Aucun appel du helper apres le ROLLBACK (le contexte n'y existe plus).
+    expect(sql.lastIndexOf("perform public.test_set_auth(")).toBeLessThan(rollbackIndex);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Divergence : les trois scripts DOIVENT declarer un helper strictement
+// identique. Une divergence (notamment sur leFlag de set_config) ferait que
+// le dernier script execute determine le comportement des suivants, puisque
+// chacun recree la fonction avec `create or replace`.
+// ---------------------------------------------------------------------------
+describe("parite du helper test_set_auth entre les scripts", () => {
+  function extractHelper(sql: string): string {
+    const start = sql.indexOf(HELPER_DECL);
+    const end = sql.indexOf("\n$$;", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(-1);
+    return sql.slice(start, end).trim();
+  }
+
+  it("declare un corps de fonction identique dans les trois scripts", () => {
+    const bodies = REVERSIBLE_SCRIPTS.map((file) => extractHelper(readScript(file)));
+    expect(new Set(bodies).size).toBe(1);
+  });
+
+  it("utilise le meme drapeau set_config dans les trois scripts", () => {
+    for (const file of REVERSIBLE_SCRIPTS) {
+      const body = extractHelper(readScript(file));
+      expect(body).toContain(")::text, true)");
+      expect(body).not.toContain(")::text, false)");
+    }
+  });
+});

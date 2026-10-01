@@ -18,6 +18,11 @@ const h = vi.hoisted(() => {
 
   const rpcCalls: Array<{ fn: string; args: unknown }> = [];
   const storageCalls: Array<{ bucket: string; paths: string[] }> = [];
+  const storageListCalls: Array<{
+    bucket: string;
+    folder: string;
+    search?: string;
+  }> = [];
 
   const db = {
     sessions: [] as Row[],
@@ -31,6 +36,9 @@ const h = vi.hoisted(() => {
     updateError: null as string | null,
     deleteError: null as string | null,
     removeError: null as string | null,
+    listError: null as string | null,
+    // Chemins d'objets réellement présents dans le bucket. Vide = aucun objet.
+    storageObjects: [] as string[],
   };
 
   const TABLES: Record<string, Row[]> = {
@@ -65,8 +73,11 @@ const h = vi.hoisted(() => {
     db.updateError = null;
     db.deleteError = null;
     db.removeError = null;
+    db.listError = null;
+    db.storageObjects = [];
     rpcCalls.length = 0;
     storageCalls.length = 0;
+    storageListCalls.length = 0;
   }
 
   function sessionRow(overrides: Row = {}): Row {
@@ -229,10 +240,39 @@ const h = vi.hoisted(() => {
       from: (bucket: string) => ({
         remove: async (paths: string[]) => {
           storageCalls.push({ bucket, paths });
+          for (const path of paths) {
+            db.storageObjects = db.storageObjects.filter((p) => p !== path);
+          }
           return {
             data: null,
             error: db.removeError ? { message: db.removeError } : null,
           };
+        },
+        // list(folder, { search }) : ne renvoie que les fichiers du dossier,
+        // `id` non nul. Reproduit le filtrage exact + préfixe de `search`.
+        list: async (folder: string, opts?: { search?: string }) => {
+          storageListCalls.push({
+            bucket,
+            folder,
+            ...(opts?.search !== undefined ? { search: opts.search } : {}),
+          });
+          if (db.listError) {
+            return { data: null, error: { message: db.listError } };
+          }
+          const prefix = `${folder}/`;
+          const data = db.storageObjects
+            .filter((path) => path.startsWith(prefix))
+            .filter((path) => !path.slice(prefix.length).includes("/"))
+            .filter(
+              (path) =>
+                opts?.search === undefined ||
+                path.slice(prefix.length).startsWith(opts.search)
+            )
+            .map((path) => ({
+              id: `obj-${path.length}`,
+              name: path.slice(prefix.length),
+            }));
+          return { data, error: null };
         },
       }),
     },
@@ -246,6 +286,7 @@ const h = vi.hoisted(() => {
     documentRow,
     rpcCalls,
     storageCalls,
+    storageListCalls,
     ORG,
     OTHER_ORG: "99999999-9999-4999-8999-999999999999",
     SESSION,
@@ -452,15 +493,115 @@ describe("addImportDocument", () => {
 });
 
 describe("markImportDocumentUploaded", () => {
+  const expectedPath = `organizations/${h.ORG}/imports/${h.SESSION}/documents/${h.DOC}/stock.pdf`;
+  const expectedFolder = `organizations/${h.ORG}/imports/${h.SESSION}/documents/${h.DOC}`;
+
   beforeEach(() => {
     h.db.sessions = [h.sessionRow()];
     h.db.documents = [h.documentRow()];
+    // Par défaut l'objet existe : les cas historiques testent le graphe d'états,
+    // pas la présence Storage (isolée dans les cas dédiés ci-dessous).
+    h.db.storageObjects = [expectedPath];
   });
 
-  it("autorise uploading → uploaded", async () => {
+  // --- Finding #2 : uploaded exige l'objet Storage correspondant -------------
+
+  it("1. objet présent -> transition uploading → uploaded autorisée", async () => {
+    h.db.storageObjects = [expectedPath];
+
     const row = await markImportDocumentUploaded(h.DOC);
+
     expect(row.state).toBe("uploaded");
+    // Vérification faite sur le dossier ET le nom exact du document.
+    expect(h.storageListCalls).toEqual([
+      { bucket: "imports", folder: expectedFolder, search: "stock.pdf" },
+    ]);
   });
+
+  it("2. objet absent -> transition refusée, AUCUNE écriture (pas de faux positif uploaded)", async () => {
+    h.db.storageObjects = [];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Objet Storage absent"
+    );
+
+    // La row reste 'uploading' : l'extraction ne peut pas être débloquée.
+    expect(h.db.documents[0].state).toBe("uploading");
+    expect(h.storageListCalls).toHaveLength(1);
+  });
+
+  it("2b. objet au nom approchant (même préfixe) -> refusé (pas de faux positif)", async () => {
+    h.db.storageObjects = [`${expectedFolder}/stock.pdf.bak`];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Objet Storage absent"
+    );
+    expect(h.db.documents[0].state).toBe("uploading");
+  });
+
+  it("2c. objet dans un AUTRE dossier du même document -> refusé (pas de faux positif)", async () => {
+    const otherFolder = `organizations/${h.ORG}/imports/${h.SESSION}/documents/44444444-4444-4444-8444-444444444444`;
+    h.db.storageObjects = [`${otherFolder}/stock.pdf`];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Objet Storage absent"
+    );
+    expect(h.db.documents[0].state).toBe("uploading");
+  });
+
+  it("2d. erreur de lecture Storage -> refus explicite, aucune écriture", async () => {
+    h.db.listError = "bucket indisponible";
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Erreur vérification objet Storage: bucket indisponible"
+    );
+    expect(h.db.documents[0].state).toBe("uploading");
+  });
+
+  it("3. utilisateur non autorisé (rôle seller) -> refus, aucun accès Storage", async () => {
+    h.db.roles[h.ORG] = "seller";
+    h.db.storageObjects = [expectedPath];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+    expect(h.db.documents[0].state).toBe("uploading");
+    expect(h.storageListCalls).toHaveLength(0);
+  });
+
+  it("3b. non authentifié -> refus, aucun accès Storage", async () => {
+    h.db.user = null;
+    h.db.storageObjects = [expectedPath];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Non authentifié"
+    );
+    expect(h.storageListCalls).toHaveLength(0);
+  });
+
+  it("4. document d'une AUTRE organisation -> refus, aucun accès Storage", async () => {
+    // L'utilisateur est owner de h.ORG ; le document appartient à h.OTHER_ORG
+    // (donc current_org_role(OTHER_ORG) = null). Sans contrôle du
+    // organization_id porté par le document, l'upload serait validé à tort.
+    h.db.documents = [
+      h.documentRow({
+        organization_id: h.OTHER_ORG,
+        storage_path: `organizations/${h.OTHER_ORG}/imports/${h.SESSION}/documents/${h.DOC}/stock.pdf`,
+      }),
+    ];
+    h.db.roles = { [h.ORG]: "owner" };
+    h.db.storageObjects = [
+      `organizations/${h.OTHER_ORG}/imports/${h.SESSION}/documents/${h.DOC}/stock.pdf`,
+    ];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+    expect(h.db.documents[0].state).toBe("uploading");
+    expect(h.storageListCalls).toHaveLength(0);
+  });
+
+  // --- Comportement historique conservé -------------------------------------
 
   it("refuse une transition hors graphe (parsed → uploaded)", async () => {
     h.db.documents = [h.documentRow({ state: "parsed" })];
@@ -475,6 +616,20 @@ describe("markImportDocumentUploaded", () => {
     await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
       "Document d'import introuvable"
     );
+  });
+
+  it("refuse un chemin Storage n'appartenant pas au document (avant tout accès Storage)", async () => {
+    h.db.documents = [
+      h.documentRow({
+        storage_path: `organizations/${h.ORG}/imports/${h.SESSION}/documents/44444444-4444-4444-8444-444444444444/stock.pdf`,
+      }),
+    ];
+
+    await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
+      "Chemin Storage du document invalide"
+    );
+    expect(h.storageListCalls).toHaveLength(0);
+    expect(h.db.documents[0].state).toBe("uploading");
   });
 });
 

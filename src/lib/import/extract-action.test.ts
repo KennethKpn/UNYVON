@@ -229,3 +229,73 @@ describe("extractImportDocument (Storage → extraction, lecture seule)", () => 
     expect(h.db.writes).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Finding #3 : l'extraction exige state = 'uploaded' (exactement).
+// Précondition évaluée AVANT toute I/O : aucun téléchargement, aucun appel IA.
+// ---------------------------------------------------------------------------
+
+describe("extractImportDocument — précondition d'état 'uploaded'", () => {
+  it("refuse 'uploading' : ni téléchargement ni appel IA", async () => {
+    h.db.documents = [h.documentRow({ state: "uploading" })];
+    h.db.downloadBytes = new TextEncoder().encode("# contenu");
+
+    await expect(extractImportDocument(h.DOC)).rejects.toThrow(
+      "Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : uploading)"
+    );
+
+    // Point central du finding : la garde précède l'extraction coûteuse.
+    expect(h.db.storageDownloads).toEqual([]);
+    expect(h.providerState.parseCalls).toEqual([]);
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it.each([
+    "parsing",
+    "parsed",
+    "extracting",
+    "extracted",
+    "failed",
+  ])("refuse l'état '%s' (jamais une extraction coûteuse)", async (state) => {
+    h.db.documents = [h.documentRow({ state })];
+    h.db.downloadBytes = new TextEncoder().encode("# contenu");
+
+    await expect(extractImportDocument(h.DOC)).rejects.toThrow(
+      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${state})`
+    );
+
+    expect(h.db.storageDownloads).toEqual([]);
+    expect(h.providerState.parseCalls).toEqual([]);
+    expect(h.db.writes).toEqual([]);
+  });
+
+  it("autorise 'uploaded' et effectue alors téléchargement + extraction", async () => {
+    h.db.documents = [h.documentRow({ state: "uploaded" })];
+    h.db.downloadBytes = new TextEncoder().encode("# Huile de palme — 2500 FCFA");
+
+    const result = await extractImportDocument(h.DOC);
+
+    expect(result.status).toBe("SUCCESS");
+    expect(h.db.storageDownloads).toEqual([
+      {
+        bucket: "imports",
+        path: `organizations/${h.ORG}/imports/${h.SESSION}/documents/${h.DOC}/stock.md`,
+      },
+    ]);
+    expect(h.providerState.parseCalls).toHaveLength(1);
+  });
+
+  it("la garde d'état ne contourne pas le contrôle d'organisation", async () => {
+    // state invalide ET autre organisation : l'erreur de rôle reste prioritaire
+    // (les gardes d'auth/RBAC précèdent la logique métier).
+    h.db.documents = [
+      h.documentRow({ organization_id: h.OTHER_ORG, state: "uploading" }),
+    ];
+    h.db.roles = { [h.ORG]: "owner" };
+
+    await expect(extractImportDocument(h.DOC)).rejects.toThrow(
+      "Seuls les propriétaires et managers peuvent gérer les imports"
+    );
+    expect(h.db.storageDownloads).toEqual([]);
+  });
+});

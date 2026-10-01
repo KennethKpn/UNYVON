@@ -52,8 +52,85 @@ chemin) et `supabase/verify-import-storage.sql` § 2.7 (row puis objet, ROLLBACK
   § 1.7 (compte = 4) reste valide.
 
 Tests : `src/lib/import/storage-integrity.test.ts` (définition *effective*
-verrouillée : dernière migration créant chaque policy) et
-`supabase/verify-import-storage.sql` § 1 (catalogue) + § 2 (aller-retour).
+verrouillée : dernière migration créant chaque policy),
+`src/lib/import/verify-scripts-cleanup.test.ts` (réversibilité des scripts
+`verify-*.sql`) et `supabase/verify-import-storage.sql` § 1 (catalogue) +
+§ 2 (aller-retour).
+
+### 2.1 Passage à `uploaded` subordonné à l'objet (`markImportDocumentUploaded`)
+
+`markImportDocumentUploaded` est le pivot qui **ferme** la fenêtre d'upload
+(policies `imports_insert/update` dès lors refusées) et **ouvre** l'extraction.
+Vérifier uniquement le graphe d'états laissait un client obtenir `uploaded`
+**sans un seul octet stocké** : extraction sur objet absent, et contenu
+définitivement immuable donc non rattrapable.
+
+| Ordre | Contrôle | Échec |
+|---|---|---|
+| 1 | auth (`requireAuth`) | aucune écriture, aucun accès Storage |
+| 2 | rôle owner/manager **de l'organisation du document** | idem |
+| 3 | graphe d'états (`uploading → uploaded`) | idem |
+| 4 | chemin Storage conforme et **appartenant au document** (`assertOwnedStoragePath`) | idem |
+| 5 | **présence réelle de l'objet** au chemin exact (`.list(folder, { search })` + nom exact + `id` non nul) | idem — la row reste `uploading` |
+
+- L'existence est lue via la policy `imports_select_owner_manager` : un objet
+  hors périmètre n'est pas visible, donc jamais compté comme présent.
+- Correspondance **exacte** du nom : ni un nom partageant un préfixe
+  (`stock.pdf.bak`) ni un objet portant le même nom dans un autre dossier ne
+  satisfont la garde.
+- Une erreur de lecture Storage est refusée explicitement (jamais traitée comme
+  « objet présent ») : l'échec réseau ne doit pas ouvrir l'extraction.
+- Tests : `src/lib/import/import-actions.test.ts` (describe
+  `markImportDocumentUploaded` — objet présent / absent / préfixe / autre
+  dossier / erreur Storage / rôle insuffisant / non authentifié / autre
+  organisation / chemin invalide).
+
+### 2.2 Extraction réservée à l'état `uploaded` (`extractImportDocument`)
+
+L'extraction exige `state = 'uploaded'` **exactement** : ni `uploading`
+(contenu encore modifiable, upload non abouti), ni `parsing`/`parsed`/
+`extracting`/`extracted`/`failed`. La garde est placée **après** auth et rôle
+(les contrôles d'accès restent prioritaires) mais **avant** le téléchargement
+de l'objet et **avant** toute instanciation de provider : aucun octet lu,
+aucun appel IA, aucun coût pour un document non éligible.
+
+Tests : `src/lib/import/extract-action.test.ts` (describe « précondition d'état
+'uploaded' » — refus `uploading`, refus paramétré des cinq autres états, succès
+`uploaded`, priorité du contrôle d'organisation).
+
+### 2.3 Scripts de vérification réversibles
+
+`public.test_set_auth(uuid)` est `SECURITY DEFINER`. Laissé installé, il est
+appelable par `PUBLIC` (défaut Postgres sur le schéma `public`) et permet
+d'usurper n'importe quel `sub` via `request.jwt.claims` — **contournement de
+RLS**. Les trois scripts `verify-*.sql` le créent ; les trois le créent
+désormais **dans la transaction** ouverte en tête de script et annulée par le
+`ROLLBACK` final : rien ne subsiste, y compris après une exécution en échec
+(transaction avortée). Un `drop function if exists` inconditionnel puis une
+assertion `to_regprocedure` ferment le cas d'un run antérieur déjà pollué.
+
+`verify-rls.sql` avait en outre un défaut plus grave : il ne comportait
+**aucun** `BEGIN`/`ROLLBACK` alors que son en-tête l'affirmait, et sa mutation
+de test `update public.organizations set name = 'PIRATAGE'` était donc
+persistée — une régression RLS aurait durablement corrompu un nom
+d'organisation. Ce mutation est désormais encadrée par la transaction annulée.
+
+Le helper utilise `set_config('request.jwt.claims', …, true)`, c'est-à-dire
+`SET LOCAL` : le contexte d'impersonation est **transactionnel** et disparaît
+au `ROLLBACK`. Il l'était initialement en `false` (`SET` sessionnel), ce qui
+laissait un `sub` forgé dans la session de l'opérateur — y compris après un run
+interrompu. Corollat : le helper n'a de sens qu'appelé **à l'intérieur** d'un
+bloc de transaction ; hors transaction, `SET LOCAL` est sans effet et
+l'impersonation échouerait silencieusement (faux positifs sur les tests RLS).
+
+Preuve automatisée (aucune base locale dans ce dépôt) :
+`src/lib/import/verify-scripts-cleanup.test.ts` verrouille l'enveloppe
+transactionnelle des trois scripts, l'assertion de nettoyage, le drapeau
+`SET LOCAL`, l'absence d'appel du helper hors transaction, — et pour
+`verify-rls.sql` — que sa mutation de données est encadrée par la transaction
+(`BEGIN` < mutation < `ROLLBACK`). Un second bloc vérifie que les trois scripts
+déclarent un corps de helper **strictement identique** (le dernier script
+exécuté ne doit pas dicter le comportement des suivants).
 
 ## 3. Métadonnées déclarées avant upload
 
@@ -92,7 +169,10 @@ limite de corps 1 Mo face aux 25 Mo du bucket).
   détection revient aux adaptateurs d'extraction (rejet des formats non supportés).
 - **Contenu remplacé pendant la fenêtre `uploading`** : l'UPDATE de l'objet y est
   autorisé ; c'est le contrat, la fenêtre se referme au passage à `uploaded`
-  (`markImportDocumentUploaded`).
+  (`markImportDocumentUploaded`) — transition désormais subordonnée à la
+  présence réelle de l'objet (§ 2.1).
+- **Upload annoncé mais absent** : faille désormais fermée —
+  `markImportDocumentUploaded` refuse `uploaded` si l'objet n'existe pas (§ 2.1).
 - `page_count`, `processed_at` : renseignés par l'extraction, jamais déclarés.
 
 ## 4. Limite de décompression documentaire (anti zip-bomb)

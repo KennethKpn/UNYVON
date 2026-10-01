@@ -12,18 +12,22 @@
 --            'uploaded', suppression row PUIS objet validee),
 --            systematiquement annule par ROLLBACK.
 -- Chaque ecart leve une exception => script en echec = migration non conforme.
+--
+-- REVERSIBILITE : le helper test_set_auth est cree DANS la transaction
+-- ci-dessous, annulee par le ROLLBACK final : il ne survit jamais a une
+-- execution reussie -- et n'est pas non plus laisse par une execution en
+-- echec (la transaction est alors avortee). Un cleanup explicite + une
+-- assertion post-rollback ferment le cas d'un run anterieur deja pollue.
+-- Raison de securite : public.test_set_auth est SECURITY DEFINER ; laisse
+-- installe, il est appelable par PUBLIC (defaut Postgres sur le schema
+-- public) et permet d'usurper n'importe quel `sub` => contournement de RLS.
 -- ============================================================================
-
--- ---------------------------------------------------------------------------
--- REVERSIBILITY : ce script ne doit laisser aucune mutation métier ni helper
--- de test persistant. Toute la vérification est exécutée dans une transaction
--- unique ; le ROLLBACK final annule aussi la création du helper temporaire.
--- ---------------------------------------------------------------------------
 
 begin;
 
 -- Helper : equivalent auth.uid() pour les tests (memes definitions que
--- verify-rls.sql / verify-import.sql, idempotent).
+-- verify-rls.sql / verify-import.sql, idempotent). Cree dans la
+-- transaction => jamais persiste.
 create or replace function public.test_set_auth(uid uuid)
 returns void
 language plpgsql
@@ -31,6 +35,8 @@ security definer
 set search_path = public
 as $$
 begin
+  -- true = SET LOCAL : le contexte d'impersonation n'existe que dans la
+  -- transaction et est annule par le ROLLBACK (jamais residues en session).
   perform set_config('request.jwt.claims', json_build_object(
     'sub', uid::text,
     'role', 'authenticated'
@@ -120,8 +126,9 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------
--- 2. Aller-retour ecriture impersonne owner (annule par ROLLBACK)
+-- 2. Aller-retour ecriture impersonne owner (annule par le ROLLBACK final)
 -- ---------------------------------------------------------------------------
+
 do $$
 declare
   v_user   uuid;
@@ -266,12 +273,21 @@ end $$;
 
 rollback;
 
--- Contrôle post-rollback : le helper temporaire ne doit pas avoir survécu.
+-- ---------------------------------------------------------------------------
+-- 3. Reversibilite : aucun objet auxiliaire ne doit subsister
+--
+-- Le ROLLBACK ci-dessus a deja supprime test_set_auth. Ce bloc couvre le cas
+-- d'un run anterieur (avant reversibilite) qui l'aurait laisse installe :
+-- `drop ... if exists` est donc volontairement inconditionnel, et l'assertion
+-- qui suit prouve l'absence effective plutot que de la supposer.
+-- ---------------------------------------------------------------------------
+drop function if exists public.test_set_auth(uuid);
+
 do $$
 begin
-  if to_regprocedure('public.test_set_auth(uuid)') is null then
-    raise notice 'OK : le helper public.test_set_auth(uuid) n''a pas survécu au ROLLBACK';
-  else
-    raise exception 'ECHEC DE REVERSIBILITE : public.test_set_auth(uuid) existe encore après ROLLBACK';
+  if to_regprocedure('public.test_set_auth(uuid)') is not null then
+    raise exception
+      'ECHEC : le helper public.test_set_auth(uuid) a survecu a la verification';
   end if;
+  raise notice 'OK : aucun objet auxiliaire test_set_auth ne subsiste';
 end $$;

@@ -1,6 +1,6 @@
 import { IMPORT_MAX_FILE_BYTES, IMPORT_V1_FORMATS } from "../types";
 import { extractTextContent } from "./adapters";
-import { validateLlmOutput } from "./output-schema";
+import { validateLlmOutput, verifyProvenanceAgainstPages } from "./output-schema";
 import type { Provider } from "./provider";
 import type { ExtractedDocument, ExtractionWarning } from "./types";
 
@@ -36,12 +36,22 @@ function imageMimeType(filename: string): string {
   return "application/octet-stream";
 }
 
+// Un document importé PEUT contenir littéralement "[Page 42]" (référence
+// d'annexe, table des matières, ou tentative d'usurper la pagination). Le
+// marqueur applicatif reste le seul émis ; toute occurrence visuellement
+// identique dans le texte importé est échappée pour ne jamais pouvoir être
+// confondue avec une vraie pagination. L'information reste lisible, seule la
+// syntaxe du faux marqueur est neutralisée.
+function escapeForgedPageMarkers(text: string): string {
+  return text.replace(/\[(?=Page\s+\d+\])/g, "\\[");
+}
+
 function composeProviderText(
   pages: ExtractedDocument["pages"],
   warnings: ExtractionWarning[]
 ): string {
   const full = pages
-    .map((page) => `[Page ${page.page}]\n${page.text}`)
+    .map((page) => `[Page ${page.page}]\n${escapeForgedPageMarkers(page.text)}`)
     .join("\n\n");
   if (full.length <= MAX_PROVIDER_TEXT_CHARS) return full;
   warnings.push({
@@ -116,7 +126,9 @@ async function runExtraction(
       });
       return fail("INVALID_OUTPUT", "Aucune donnée exploitable dans l'image");
     }
-    document.candidates = validated.candidates;
+    // Voie image : aucune page de référence n'est disponible, la vérification
+    // de provenance est donc neutre (document.pages est vide à ce stade).
+    document.candidates = verifyProvenanceAgainstPages(validated.candidates, document.pages);
     document.status = "SUCCESS";
     return document;
   }
@@ -166,7 +178,7 @@ async function runExtraction(
     return document;
   }
 
-  document.candidates = validated.candidates;
+  document.candidates = verifyProvenanceAgainstPages(validated.candidates, document.pages);
   document.status = "SUCCESS";
   return document;
 }

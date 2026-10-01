@@ -238,6 +238,12 @@ export async function addImportDocument(
   return { document: data as DatabaseImportDocument, storagePath };
 }
 
+// Passe à 'uploaded' = FERME la fenêtre d'upload de 0012 (insert/update de
+// l'objet_storage become refusés) et OUVRE l'extraction. Sans vérification de
+// l'objet, un simple appel client suffirait à obtenir un document 'uploaded'
+// sans un seul octet stocké : extraction sur un objet absent, et contenu
+// devenu immuable donc plus rattrapable. La transition est donc subordonnée à
+// la PRÉSENCE RÉELLE de l'objet au chemin EXACT du document.
 export async function markImportDocumentUploaded(
   documentId: string
 ): Promise<DatabaseImportDocument> {
@@ -253,6 +259,10 @@ export async function markImportDocumentUploaded(
     );
   }
 
+  // Après le graphe d'états (erreur d'état attendue prioritaire sur l'I/O) et
+  // avant toute mutation : rien n'est écrit si l'objet est absent.
+  await assertStorageObjectExists(supabase, document);
+
   const { data, error } = await supabase
     .from("import_documents")
     .update({ state: "uploaded" })
@@ -263,6 +273,40 @@ export async function markImportDocumentUploaded(
     throw new Error(`Erreur mise à jour document: ${error.message}`);
   }
   return data as DatabaseImportDocument;
+}
+
+// Liste le dossier du document (organizations/{org}/imports/{sid}/documents/
+// {doc}) et exige un fichier dont le nom est EXACTEMENT celui du document.
+// `list` est soumis à la policy imports_select_owner_manager (RLS) : un objet
+// hors périmètre n'est simplement pas visible, donc jamais compté comme présent.
+// Le filtre exact (et non un simple `search`) évite les faux positifs d'un
+// nom partageant un préfixe, ainsi qu'un faux négatif sur un homonyme.
+async function assertStorageObjectExists(
+  supabase: ServerSupabase,
+  document: DatabaseImportDocument
+): Promise<void> {
+  assertOwnedStoragePath(document);
+
+  const slash = document.storage_path.lastIndexOf("/");
+  const folder = document.storage_path.slice(0, slash);
+  const fileName = document.storage_path.slice(slash + 1);
+
+  const { data, error } = await supabase.storage
+    .from("imports")
+    .list(folder, { search: fileName });
+  if (error) {
+    throw new Error(`Erreur vérification objet Storage: ${error.message}`);
+  }
+
+  // `id` non nul = fichier ; un dossier porterait id = null.
+  const present = (data ?? []).some(
+    (entry) => entry.name === fileName && typeof entry.id === "string"
+  );
+  if (!present) {
+    throw new Error(
+      "Objet Storage absent : l'upload du document n'a pas abouti, la transition vers 'uploaded' est refusée"
+    );
+  }
 }
 
 export async function markImportDocumentUploadFailed(
@@ -377,8 +421,14 @@ export async function getImportDocuments(
 // ---------------------------------------------------------------------------
 // Extraction (Phase 4) — Storage → lecture → extraction → structure validée.
 // Lecture seule : aucune écriture DB, aucune mutation d'état.
-// ---------------------------------------------------------------------------
-
+//
+// Précondition d'état : 'uploaded' EXACTEMENT. L'extraction ne doit jamais
+// transformer un document en cours d'upload ('uploading') ni un document
+// terminal ('failed', 'extracted'…) : le seul état dont on sait que l'objet
+// existe et que son contenu est figé est 'uploaded'. Ce contrôle est placé
+// AVANT le téléchargement et avant toute instanciation de provider : aucun
+// octet n'est lu et aucun appel IA n'est émis pour un document non éligible
+// (pas de coût, pas de surface d'injection).
 export async function extractImportDocument(
   documentId: string
 ): Promise<ExtractedDocument> {
@@ -387,6 +437,12 @@ export async function extractImportDocument(
 
   const document = await fetchDocument(supabase, documentId);
   await requireManagerRole(supabase, document.organization_id);
+
+  if (document.state !== "uploaded") {
+    throw new Error(
+      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${document.state})`
+    );
+  }
 
   const { data: blob, error } = await supabase.storage
     .from("imports")

@@ -258,7 +258,14 @@ describe("raw / confiance / absences", () => {
   });
 
   it("conserve la confiance de chaque champ", async () => {
-    const doc = await run("md", enc("contenu"), fakeProvider(VALID_OUTPUT));
+    // Le document contient réellement les valeurs annoncées : la confiance
+    // déclarée par le modèle est conservée. (Une valeur absente du document
+    // est, elle, rétrogradée — cf. "provenance" plus bas.)
+    const doc = await run(
+      "md",
+      enc("Huile de palme 1L — 2500 FCFA"),
+      fakeProvider(VALID_OUTPUT)
+    );
     expect(doc.candidates[0].fields.name?.confidence).toBe("high");
     expect(doc.candidates[0].fields.sale_price?.confidence).toBe("medium");
   });
