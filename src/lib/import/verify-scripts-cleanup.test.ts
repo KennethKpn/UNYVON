@@ -179,3 +179,61 @@ describe("parite du helper test_set_auth entre les scripts", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// storage.objects : colonne d'ownership canonique.
+//
+// Sur le schema Storage reel du projet UNYVON, storage.objects porte
+// `owner uuid` (depreciee) et `owner_id text` (canonique, documentee par
+// Supabase). Ecrire l'ownership dans `owner` echouerait sur toute base ou la
+// colonne depreciee a ete retiree, sans exercer la politique attendue.
+//
+// Ce bloc verrouille que les DEUX insertions du script (upload initial §2.2 et
+// re-upload refuse §2.5) passent par `owner_id`, avec un cast explicite en
+// texte : `owner_id` est de type text quand `owner` est de type uuid, donc
+// l'affectation directe de v_user (uuid) serait un echec d'affectation de
+// type — le script echouerait sur une erreur trompeuse, pas sur la RLS.
+// ---------------------------------------------------------------------------
+describe("verify-import-storage.sql — ownership Storage via owner_id", () => {
+  const sql = readScript("verify-import-storage.sql");
+
+  // INSERT ... storage.objects (colonnes) VALUES (valeurs);
+  const STORAGE_INSERT =
+    /insert\s+into\s+storage\.objects\s*\(([^)]*)\)\s*values\s*\(([\s\S]*?)\);/gi;
+
+  function storageInserts(): Array<{ columns: string[]; values: string }> {
+    return [...sql.matchAll(STORAGE_INSERT)].map((match) => ({
+      columns: match[1].split(",").map((column) => column.trim()),
+      values: match[2],
+    }));
+  }
+
+  it("ecrit l'ownership via owner_id dans les DEUX insertions storage.objects", () => {
+    const inserts = storageInserts();
+    // 2 attendu : upload initial (§2.2) + re-upload refuse apres uploaded (§2.5).
+    expect(inserts).toHaveLength(2);
+    for (const insert of inserts) {
+      expect(insert.columns).toContain("owner_id");
+    }
+  });
+
+  it("ne reference plus la colonne owner depreciee dans aucune insertion", () => {
+    // `\bowner\b` ne matche PAS `owner_id` : `_` etant un caractere de mot, il
+    // n'existe pas de frontiere entre `owner` et `_id`. La colonne depreciee
+    // reste donc detectable sans confusion avec owner_id.
+    const withDeprecatedOwner = [
+      ...sql.matchAll(/insert\s+into\s+storage\.objects\s*\([^)]*\bowner\b[^)]*\)/gi),
+    ];
+    expect(withDeprecatedOwner).toHaveLength(0);
+  });
+
+  it("caste l'identifiant en texte pour owner_id (colonne text, pas uuid)", () => {
+    for (const insert of storageInserts()) {
+      expect(insert.values).toMatch(/\bv_user\s*::\s*text\b/);
+    }
+  });
+
+  it("n'introduit aucune qualification residuelle storage.objects.owner", () => {
+    expect(sql).not.toMatch(/storage\.objects\.owner\b/i);
+  });
+});

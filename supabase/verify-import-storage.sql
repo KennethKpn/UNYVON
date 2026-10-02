@@ -171,8 +171,8 @@ begin
 
   -- 2.2 INSERT objet autorise pendant 'uploading'
   begin
-    insert into storage.objects (bucket_id, name, owner, metadata)
-    values ('imports', v_path, v_user, '{"mimetype":"application/pdf"}'::jsonb);
+    insert into storage.objects (bucket_id, name, owner_id, metadata)
+    values ('imports', v_path, v_user::text, '{"mimetype":"application/pdf"}'::jsonb);
   exception when others then
     reset role;
     perform public.test_set_auth(null);
@@ -207,8 +207,8 @@ begin
   v_reupload_path := 'organizations/' || v_org || '/imports/' || v_sid
                    || '/documents/' || v_did || '/stock-test-reupload.pdf';
   begin
-    insert into storage.objects (bucket_id, name, owner, metadata)
-    values ('imports', v_reupload_path, v_user, '{"mimetype":"application/pdf"}'::jsonb);
+    insert into storage.objects (bucket_id, name, owner_id, metadata)
+    values ('imports', v_reupload_path, v_user::text, '{"mimetype":"application/pdf"}'::jsonb);
     reset role;
     perform public.test_set_auth(null);
     raise exception 'ECHEC : re-upload sur nouveau chemin accepté après uploaded';
