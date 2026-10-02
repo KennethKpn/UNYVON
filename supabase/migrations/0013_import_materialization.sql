@@ -74,6 +74,9 @@ begin
     raise exception 'Session d''import introuvable';
   end if;
 
+  -- La session doit encore autoriser la matérialisation, y compris pour les
+  -- appels idempotents. Un import annulé/terminé ne devient jamais relisible
+  -- par cette opération.
   select *
     into v_document
     from public.import_documents
