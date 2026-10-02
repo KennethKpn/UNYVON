@@ -9,8 +9,14 @@
 --            100 % deterministe, aucune donnee necessaire.
 -- Partie 2 : aller-retour ecriture impersonne owner sur storage.objects
 --            (upload autorise pendant 'uploading', contenu immuable des
---            'uploaded', suppression row PUIS objet validee),
+--            'uploaded', suppression de la row applicative),
 --            systematiquement annule par ROLLBACK.
+-- HORS PERIMETRE SQL — suppression d'un objet Storage. Supabase interdit le
+-- DELETE direct sur storage.objects ("Direct deletion from storage tables is
+-- not allowed. Use the Storage API instead."). deleteImportDocument passe donc
+-- par la Storage API (.remove([...])) : l'ordre row -> objet et l'absence
+-- d'orphelin sont verifies par test-storage-delete-runtime.js, en contexte
+-- `authenticated` (service_role contournerait la RLS et ne prouverait rien).
 -- Chaque ecart leve une exception => script en echec = migration non conforme.
 --
 -- REVERSIBILITE : le helper test_set_auth est cree DANS la transaction
@@ -88,6 +94,8 @@ declare
   v int;
   v_qual text;
   v_check text;
+  v_cmd text;
+  v_roles name[];
 begin
   -- 1.3 INSERT : existence de row + etat 'uploading'
   select with_check into v_check from pg_policies
@@ -111,16 +119,34 @@ begin
   end if;
   raise notice 'OK : imports_update_owner_manager exige import_documents etat uploading';
 
-  -- 1.5 DELETE : SANS exigence d'existence de row (deleteImportDocument
-  --     supprime la row PostgreSQL puis l'objet ; une exigence de row
-  --     rendrait la suppression de l'impossible => objet orphelin).
-  select qual into v_qual from pg_policies
+-- 1.5 DELETE : SANS exigence d'existence de row. deleteImportDocument
+  --     supprime la row PostgreSQL PUIS appelle la Storage API
+  --     (.remove([...])) : au moment ou l'objet est supprime, la row
+  --     n'existe deja plus. Une exigence de row ici rendrait la suppression
+  --     de l'objet impossible => orphelin garanti.
+  --     Seul controle structurel possible en SQL : le DELETE direct sur
+  --     storage.objects est interdit par Supabase (voir en-tete).
+  select qual, cmd, roles into v_qual, v_cmd, v_roles
+    from pg_policies
    where schemaname = 'storage' and tablename = 'objects'
      and policyname = 'imports_delete_owner_manager';
-  if v_qual is null or position('import_documents' in v_qual) > 0 then
+
+  if v_qual is null then
+    raise exception 'ECHEC : policy imports_delete_owner_manager absente de storage.objects';
+  end if;
+  if v_cmd <> 'DELETE' then
+    raise exception 'ECHEC : imports_delete_owner_manager est une policy % (attendu DELETE)', v_cmd;
+  end if;
+  if not (coalesce(v_roles, '{}'::name[]) @> ARRAY['authenticated'::name]) then
+    raise exception 'ECHEC : imports_delete_owner_manager ne s''applique pas au role authenticated (roles: %)', v_roles;
+  end if;
+  if position('import_documents' in v_qual) > 0 then
     raise exception 'ECHEC : imports_delete_owner_manager ne doit pas exiger la row import_documents (qual: %)', v_qual;
   end if;
-  raise notice 'OK : imports_delete_owner_manager sans dependance a la row (suppression row puis objet possible)';
+  if position('d.state' in v_qual) > 0 then
+    raise exception 'ECHEC : imports_delete_owner_manager ne doit pas dependre de l''etat du document (qual: %)', v_qual;
+  end if;
+  raise notice 'OK : imports_delete_owner_manager FOR DELETE, role authenticated, sans dependance a la row ni a l''etat';
 
   raise notice '=== PARTIE 1 OK — policies storage import conformes ===';
 end $$;
@@ -241,32 +267,26 @@ begin
   end if;
   raise notice 'OK : objet immuable apres uploaded (update bloque)';
 
-  -- 2.7 Ordre de suppression de deleteImportDocument : row PUIS objet
+  -- 2.7 Suppression de la row import_documents — seule suppression que le SQL
+  --     peut exercer (table applicative, RLS active).
+  --     L'ordre row -> objet de deleteImportDocument n'est PAS verifiable ici :
+  --     Supabase interdit le DELETE direct sur storage.objects ("Direct
+  --     deletion from storage tables is not allowed"). L'objet est supprime via
+  --     la Storage API (.remove([...])) ; ce comportement, ainsi que l'absence
+  --     d'orphelin, est verifie par test-storage-delete-runtime.js (contexte
+  --     authenticated, pas service_role).
+  --     Le ROLLBACK final annule de toute facon l'objet insere en 2.2.
   perform public.test_set_auth(v_user);
   set local role authenticated;
   delete from public.import_documents where id = v_did;
   get diagnostics v_count = row_count;
-  if v_count <> 1 then
-    reset role;
-    perform public.test_set_auth(null);
-    raise exception 'ECHEC : suppression de la row import_documents refusee (%)', v_count;
-  end if;
-
-  begin
-    delete from storage.objects where bucket_id = 'imports' and name = v_path;
-    get diagnostics v_count = row_count;
-  exception when others then
-    reset role;
-    perform public.test_set_auth(null);
-    raise exception 'ECHEC : objet non supprimable apres la row (policy delete depend de la row ?) %', sqlerrm;
-  end;
   reset role;
   perform public.test_set_auth(null);
 
   if v_count <> 1 then
-    raise exception 'ECHEC : objet Storage non supprime apres la row (% ligne)', v_count;
+    raise exception 'ECHEC : suppression de la row import_documents refusee par la RLS (%)', v_count;
   end if;
-  raise notice 'OK : suppression row puis objet (aucun orphelin)';
+  raise notice 'OK : row import_documents supprimable par un owner (objet : via Storage API — cf. test-storage-delete-runtime.js)';
 
   raise notice '=== PARTIE 2 OK — integrite Storage import conforme ===';
 end $$;
