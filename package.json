@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "e2e": "playwright test",
     "e2e:audit": "playwright test e2e/specs/audit.spec.ts e2e/specs/cta.spec.ts e2e/specs/tables.spec.ts e2e/specs/modals.spec.ts e2e/specs/onboarding.spec.ts",
     "e2e:update": "playwright test e2e/specs/visual.spec.ts --update-snapshots",
@@ -20,7 +21,8 @@
     "next": "16.3.4",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "recharts": "^2.15.3"
+    "recharts": "^2.15.3",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
@@ -32,6 +34,7 @@
     "eslint-config-next": "16.3.4",
     "playwright": "^1.62.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.11"
   }
 }

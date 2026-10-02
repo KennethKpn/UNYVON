@@ -519,38 +519,56 @@ export async function checkContrast(page: Page): Promise<ContrastIssue[]> {
         if (st.mixBlendMode !== "normal" || st.backdropFilter !== "none") {
           return null;
         }
-        if (st.backgroundImage !== "none") {
-          const stops = gradientStops(st.backgroundImage);
+        if (
+          st.backgroundImage !== "none" &&
+          !gradientStops(st.backgroundImage)
+        ) {
           // Fond d'image non dégradé (photo, motif) → non vérifiable.
-          if (!stops || stops.length === 0) return null;
-          chain.push(cur);
-          const solid = parseColor(st.backgroundColor);
-          const base =
-            solid && solid[3] > 0
-              ? over(solid, [255, 255, 255, 1])
-              : ([255, 255, 255, 1] as [number, number, number, number]);
-          const composited = stops.map((s) => {
-            const c = parseColor(s);
-            return c
-              ? `rgba(${Math.round(over(c, base)[0])},${Math.round(
-                  over(c, base)[1]
-                )},${Math.round(over(c, base)[2])},1)`
-              : s;
-          });
-          cur = cur.parentElement;
-          // On continue de remonter pour un éventuel autre dégradé parent,
-          // mais le premier dégradé rencontré domine visuellement.
-          return { kind: "gradient", stops: composited };
+          return null;
         }
         chain.push(cur);
         cur = cur.parentElement;
       }
-      let acc: [number, number, number, number] = [0, 0, 0, 0];
+      // Composition de bas en haut (racine → élément), dans l'ordre de peinture
+      // CSS : d'abord le fond plein du calque, puis son dégradé. Un fond plein
+      // opaque d'un calque supérieur recouvre intégralement les calques
+      // inférieurs, dégradé d'ancêtre compris.
+      let cands: [number, number, number, number][] = [[0, 0, 0, 0]];
+      let hasGradient = false;
       for (let i = chain.length - 1; i >= 0; i--) {
-        const c = parseColor(getComputedStyle(chain[i]).backgroundColor);
-        if (c && c[3] > 0) acc = over(c, acc);
+        const st = getComputedStyle(chain[i]);
+        const solid = parseColor(st.backgroundColor);
+        if (solid && solid[3] > 0) {
+          cands = cands.map((c) => over(solid, c));
+        }
+        const stops =
+          st.backgroundImage !== "none"
+            ? gradientStops(st.backgroundImage)
+            : null;
+        if (stops && stops.length > 0) {
+          hasGradient = true;
+          const next: [number, number, number, number][] = [];
+          for (const c of cands) {
+            for (const s of stops) {
+              const sc = parseColor(s);
+              if (sc) next.push(over([sc[0], sc[1], sc[2], 1], c));
+            }
+          }
+          if (next.length > 0) cands = next;
+        }
       }
-      return { kind: "color", color: acc };
+      if (hasGradient) {
+        return {
+          kind: "gradient",
+          stops: cands.map(
+            (c) =>
+              `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(
+                c[2]
+              )},1)`
+          ),
+        };
+      }
+      return { kind: "color", color: cands[0] };
     };
 
     const label = (el: HTMLElement): string =>

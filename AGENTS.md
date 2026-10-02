@@ -1,3 +1,13 @@
+<!-- PROJECT LOCK — UNYVON -->
+PROJECT: UNYVON
+CANONICAL REPOSITORY: KennethSalomon/UNYVON.git
+CANONICAL WORKING DIRECTORY: C:\Users\hp\Desktop\UNIVON\unyvon
+
+Toute tâche concernant UNYVON doit être exécutée dans ce dossier et sur ce remote.
+Toute divergence doit provoquer un arrêt avant modification.
+
+<!-- END:PROJECT LOCK -->
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know
