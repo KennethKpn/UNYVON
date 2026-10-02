@@ -9,10 +9,12 @@ import {
   canTransitionImportDocument,
   canTransitionImportSession,
   importStoragePathSchema,
+  uuidSchema,
 } from "@/lib/import/schemas";
 import type {
   DatabaseImportDocument,
   DatabaseImportSession,
+  DatabaseImportItem,
   ImportDocumentState,
 } from "@/lib/import/types";
 import {
@@ -429,21 +431,10 @@ export async function getImportDocuments(
 // AVANT le téléchargement et avant toute instanciation de provider : aucun
 // octet n'est lu et aucun appel IA n'est émis pour un document non éligible
 // (pas de coût, pas de surface d'injection).
-export async function extractImportDocument(
-  documentId: string
+async function performImportDocumentExtraction(
+  supabase: ServerSupabase,
+  document: DatabaseImportDocument
 ): Promise<ExtractedDocument> {
-  const supabase = await createServerSupabase();
-  await requireAuth(supabase);
-
-  const document = await fetchDocument(supabase, documentId);
-  await requireManagerRole(supabase, document.organization_id);
-
-  if (document.state !== "uploaded") {
-    throw new Error(
-      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${document.state})`
-    );
-  }
-
   const { data: blob, error } = await supabase.storage
     .from("imports")
     .download(document.storage_path);
@@ -463,4 +454,185 @@ export async function extractImportDocument(
     filename: document.original_name,
     bytes,
   });
+}
+
+// Phase 5A : extraction validée -> import_items.
+// La DB reste l'autorité de rattachement org/session/document.
+// La finalisation SQL est idempotente : un second appel après extracted
+// retourne les lignes existantes au lieu de les recréer.
+export async function extractImportDocument(
+  documentId: string
+): Promise<ExtractedDocument> {
+  const parsedId = uuidSchema.safeParse(documentId);
+  if (!parsedId.success) throw new Error("Identifiant document invalide");
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const document = await fetchDocument(supabase, documentId);
+  await requireManagerRole(supabase, document.organization_id);
+
+  if (document.state !== "uploaded") {
+    throw new Error(
+      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${document.state})`
+    );
+  }
+
+  return performImportDocumentExtraction(supabase, document);
+}
+
+// Démarre le traitement d'une session uniquement lorsque tous les documents
+// présents sont réellement uploaded. Le double clic est idempotent : processing
+// est simplement renvoyé.
+export async function startImportProcessing(
+  sessionId: string
+): Promise<DatabaseImportSession> {
+  uuidSchema.parse(sessionId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const session = await fetchSession(supabase, sessionId);
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state === "processing") return session;
+  if (session.state !== "collecting") {
+    throw new Error(
+      `Démarrage du traitement non autorisé depuis l'état ${session.state}`
+    );
+  }
+
+  const { data: documents, error: documentsError } = await supabase
+    .from("import_documents")
+    .select("id, state")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true });
+
+  if (documentsError) {
+    throw new Error(
+      `Erreur lecture documents avant traitement: ${documentsError.message}`
+    );
+  }
+
+  const rows = documents ?? [];
+  if (rows.length === 0) {
+    throw new Error("Impossible de traiter une session sans document");
+  }
+  if (!rows.every((row) => row.state === "uploaded")) {
+    throw new Error(
+      "Tous les documents doivent être en état 'uploaded' avant le traitement"
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("import_sessions")
+    .update({ state: "processing" })
+    .eq("id", sessionId)
+    .eq("state", "collecting")
+    .select()
+    .single();
+
+  if (!error) return data as DatabaseImportSession;
+
+  const latest = await fetchSession(supabase, sessionId);
+  if (latest.state === "processing") return latest;
+
+  throw new Error(
+    `Erreur démarrage du traitement d'import: ${error.message}`
+  );
+}
+
+export async function materializeImportDocument(
+  documentId: string
+): Promise<DatabaseImportItem[]> {
+  uuidSchema.parse(documentId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const document = await fetchDocument(supabase, documentId);
+  await requireManagerRole(supabase, document.organization_id);
+
+  const session = await fetchSession(supabase, document.session_id);
+  if (session.state !== "processing" && session.state !== "needs_review") {
+    throw new Error(
+      `Matérialisation autorisée pendant le traitement/review uniquement (session: ${session.state})`
+    );
+  }
+
+  if (document.state === "extracted") {
+    const { data: existing, error: existingError } = await supabase
+      .from("import_items")
+      .select("*")
+      .eq("document_id", document.id)
+      .order("created_at", { ascending: true });
+
+    if (existingError) {
+      throw new Error(
+        `Erreur lecture items déjà matérialisés: ${existingError.message}`
+      );
+    }
+    return (existing ?? []) as DatabaseImportItem[];
+  }
+
+  if (document.state !== "uploaded") {
+    throw new Error(
+      `Matérialisation autorisée uniquement depuis 'uploaded' (état actuel : ${document.state})`
+    );
+  }
+
+  let extracted: ExtractedDocument;
+  try {
+    extracted = await performImportDocumentExtraction(supabase, document);
+  } catch (error) {
+    const message = (error as Error).message;
+    await supabase
+      .from("import_documents")
+      .update({ state: "failed", error_message: message })
+      .eq("id", document.id)
+      .eq("state", "uploaded");
+    throw new Error(message);
+  }
+
+  if (extracted.status !== "SUCCESS") {
+    const detail =
+      extracted.errors.map((error) => error.message).join("; ") ||
+      extracted.warnings.map((warning) => warning.message).join("; ") ||
+      "Extraction incomplète : aucune sortie exploitable";
+    const message = `Extraction refusée avant matérialisation: ${detail}`;
+
+    await supabase
+      .from("import_documents")
+      .update({ state: "failed", error_message: message })
+      .eq("id", document.id)
+      .eq("state", "uploaded");
+
+    throw new Error(message);
+  }
+
+  const { prepareImportItemsForMaterialization } = await import(
+    "../import/materialization"
+  );
+  const candidates = prepareImportItemsForMaterialization(
+    extracted.candidates,
+    session.id,
+    document.id
+  );
+
+  const { data, error } = await supabase.rpc(
+    "materialize_import_document",
+    {
+      p_document_id: document.id,
+      p_candidates: candidates,
+      p_page_count: extracted.pages.length,
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      `Erreur matérialisation transactionnelle: ${error.message}`
+    );
+  }
+
+  return (data ?? []) as DatabaseImportItem[];
 }
