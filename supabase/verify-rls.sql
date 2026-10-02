@@ -144,29 +144,43 @@ end $$;
 -- ---------------------------------------------------------------------------
 do $$
 declare
+  v_user_a uuid;
   v_user_b uuid;
   v_org_a  uuid;
   v_updated int;
 begin
-  select user_id, organization_id into v_user_b, v_org_a
+  -- 3.1 Organisation A : premier owner par ancienneté
+  select user_id, organization_id into v_user_a, v_org_a
     from public.organization_users
    where role = 'owner'
    order by created_at
-   limit 1 offset 1;
+   limit 1;
+
+  -- 3.2 Utilisateur B : owner d'une organisation DISTINTE de A. Ce filtre est
+  --     indispensable : sans lui, deux owners d'une même organisation étaient
+  --     retenus comme couple A/B, la RLS autorisait alors légitimement
+  --     l'écriture, et le test levait un faux « ECHEC D'ISOLATION » alors que
+  --     l'isolation était intacte.
+  select user_id into v_user_b
+    from public.organization_users
+   where role = 'owner'
+     and organization_id <> v_org_a
+   order by created_at
+   limit 1;
 
   if v_user_b is null then
-    raise notice 'Besoin d''au moins 2 owners pour ce test.';
+    raise notice 'Il faut au moins 2 organisations distinctes pour tester l''isolation (créez 2 comptes/onboarding).';
     return;
   end if;
 
   perform public.test_set_auth(v_user_b);
   set local role authenticated;
 
+  -- 3.3 Cible = organisation A, désignée explicitement (et non ré-approvisionnée
+  --     par une sous-requête implicite, susceptible de viser une autre org).
   update public.organizations
      set name = 'PIRATAGE'
-   where id = (select organization_id
-                 from public.organization_users
-                where role='owner' order by created_at limit 1);
+   where id = v_org_a;
 
   get diagnostics v_updated = row_count;
 
