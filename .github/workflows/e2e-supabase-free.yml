@@ -1,6 +1,7 @@
 name: E2E — Supabase Free
 
 on:
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -18,7 +19,7 @@ jobs:
     env:
       # Dedicated Supabase Free project only — never use production values here.
       NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_E2E_URL }}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_E2E_ANON_KEY }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
       E2E_USER_EMAIL: ${{ secrets.E2E_USER_EMAIL }}
       E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
       E2E_BASE_URL: http://127.0.0.1:3000
