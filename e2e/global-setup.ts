@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 import { chromium, type Page } from "@playwright/test";
 import { loadEnv } from "./env";
 
+loadEnv();
+
 const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3000";
 
 function isLocalBaseUrl(): boolean {
@@ -144,7 +146,6 @@ export default async function globalSetup(): Promise<void> {
     force: true,
   });
 
-  loadEnv();
   assertTargetPolicy();
   const { email, password } = ensureCredentials();
   fs.mkdirSync(AUTH_DIR, { recursive: true });
