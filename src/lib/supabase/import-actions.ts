@@ -810,3 +810,25 @@ export async function finalizeImportReview(
 
   return data as DatabaseImportSession;
 }
+
+export async function commitImportSession(
+  sessionId: string
+): Promise<DatabaseImportSession> {
+  uuidSchema.parse(sessionId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const session = await fetchSession(supabase, sessionId);
+  await requireManagerRole(supabase, session.organization_id);
+
+  const { data, error } = await supabase.rpc("import_commit", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    throw new Error(`Erreur commit de l'import: ${error.message}`);
+  }
+
+  return data as DatabaseImportSession;
+}
