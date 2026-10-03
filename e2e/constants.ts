@@ -18,7 +18,7 @@ export const MOBILE_VIEWPORTS: ViewportName[] = [
   "vp-412x915",
 ];
 
-/** 17 routes auditées (contrainte 4). `auth: false` = routes publiques. */
+/** 18 routes auditées (contrainte 4). `auth: false` = routes publiques. */
 export interface RouteDef {
   path: string;
   name: string;
@@ -52,7 +52,7 @@ export const ROUTES: RouteDef[] = [
  * Screenshots visuels : routes utilisateur critiques sur les 7 viewports.
  * Les 9 routes restantes (categories, inventory, purchases, suppliers,
  * expenses, insights, team, settings, billing) sont couvertes par les tests
- * layout (17 × 7) et screenshotées uniquement aux extrêmes mobile/desktop —
+ * layout (18 × 7) et screenshotées uniquement aux extrêmes mobile/desktop —
  * exception documentée dans docs/PHASE_3K_REPORT.md.
  */
 export const CRITICAL_ROUTES: RouteDef[] = ROUTES.filter((r) =>
