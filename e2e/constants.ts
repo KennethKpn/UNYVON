@@ -41,6 +41,7 @@ export const ROUTES: RouteDef[] = [
   { path: "/customers", name: "customers", auth: true },
   { path: "/sales", name: "sales", auth: true },
   { path: "/expenses", name: "expenses", auth: true },
+  { path: "/import", name: "import", auth: true },
   { path: "/insights", name: "insights", auth: true },
   { path: "/team", name: "team", auth: true },
   { path: "/settings", name: "settings", auth: true },
