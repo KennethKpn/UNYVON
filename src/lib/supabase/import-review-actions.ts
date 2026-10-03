@@ -1,6 +1,5 @@
 "use server";
 
-import { z } from "zod";
 import { createServerSupabase } from "@/lib/supabase/server";
 import { uuidSchema, canTransitionImportDocument } from "@/lib/import/schemas";
 import type {
@@ -170,7 +169,7 @@ export async function retryImportDocument(
 
   await requireManagerRole(supabase, document.organization_id);
 
-  if (!canTransitionImportDocument(document.state, "failed")) {
+  if (!canTransitionImportDocument(document.state, "uploading")) {
     throw new Error(
       `Reprise autorisée uniquement depuis l'état 'failed' (état actuel : ${document.state})`
     );
