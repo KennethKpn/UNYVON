@@ -62,6 +62,10 @@ function ensureCredentials(): { email: string; password: string } {
     }
   }
 
+  if (!email || !password) {
+    throw new Error("Identifiants E2E introuvables après configuration.");
+  }
+
   process.env.E2E_USER_EMAIL = email;
   process.env.E2E_USER_PASSWORD = password;
   return { email, password };
