@@ -4,7 +4,20 @@ import crypto from "node:crypto";
 import { chromium, type Page } from "@playwright/test";
 import { loadEnv } from "./env";
 
-const BASE = "http://localhost:3000";
+const BASE = process.env.E2E_BASE_URL ?? "http://localhost:3000";
+
+function isLocalBaseUrl(): boolean {
+  const hostname = new URL(BASE).hostname;
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function assertTargetPolicy(): void {
+  if (!isLocalBaseUrl() && process.env.E2E_ALLOW_REMOTE !== "1") {
+    throw new Error(
+      "E2E_BASE_URL distant détecté. Pour éviter tout lancement accidentel contre un environnement réel, définissez explicitement E2E_ALLOW_REMOTE=1."
+    );
+  }
+}
 const AUTH_DIR = ".auth";
 const STATE_PATH = path.join(AUTH_DIR, "state.json");
 
@@ -12,32 +25,41 @@ function ensureCredentials(): { email: string; password: string } {
   let email = process.env.E2E_USER_EMAIL;
   let password = process.env.E2E_USER_PASSWORD;
 
-  let persisted = false;
-  if (!email) {
+  if ((email && !password) || (!email && password)) {
+    throw new Error(
+      "Configuration E2E incomplète : E2E_USER_EMAIL et E2E_USER_PASSWORD doivent être fournis ensemble."
+    );
+  }
+
+  const allowAutoProvision = process.env.E2E_ALLOW_AUTO_PROVISION === "1";
+
+  if (!email && !password) {
+    if (!allowAutoProvision) {
+      throw new Error(
+        "Identifiants E2E absents. Fournissez E2E_USER_EMAIL + E2E_USER_PASSWORD, ou activez explicitement E2E_ALLOW_AUTO_PROVISION=1 uniquement sur un environnement de test dédié."
+      );
+    }
+
     email = `e2e.main.${crypto.randomBytes(4).toString("hex")}@test.dev`;
-    persisted = true;
-  }
-  if (!password) {
     password = `E2e!${crypto.randomBytes(12).toString("base64url")}9`;
-    persisted = true;
-  }
-  if (persisted) {
+
     const envPath = path.join(process.cwd(), ".env.local");
     const existing = fs.existsSync(envPath)
       ? fs.readFileSync(envPath, "utf8")
       : "";
     const sep = existing && !existing.endsWith("\n") ? "\n" : "";
     const add: string[] = [];
-    if (!process.env.E2E_USER_EMAIL && !existing.includes("E2E_USER_EMAIL=")) {
+    if (!existing.includes("E2E_USER_EMAIL=")) {
       add.push(`E2E_USER_EMAIL=${email}`);
     }
-    if (!process.env.E2E_USER_PASSWORD && !existing.includes("E2E_USER_PASSWORD=")) {
+    if (!existing.includes("E2E_USER_PASSWORD=")) {
       add.push(`E2E_USER_PASSWORD=${password}`);
     }
     if (add.length > 0) {
       fs.appendFileSync(envPath, `${sep}${add.join("\n")}\n`);
     }
   }
+
   process.env.E2E_USER_EMAIL = email;
   process.env.E2E_USER_PASSWORD = password;
   return { email, password };
@@ -123,6 +145,7 @@ export default async function globalSetup(): Promise<void> {
   });
 
   loadEnv();
+  assertTargetPolicy();
   const { email, password } = ensureCredentials();
   fs.mkdirSync(AUTH_DIR, { recursive: true });
 
