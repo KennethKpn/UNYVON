@@ -34,7 +34,9 @@ function sourceKind(file: File): ImportSourceKind | null {
   const ext = file.name.toLowerCase().split(".").pop() ?? "";
   const f = IMPORT_V1_FORMATS.find((x) => x.extension === ext);
   const mime = file.type.split(";")[0].trim().toLowerCase();
-  return f && f.mimeTypes.includes(mime) ? f.sourceKinds[0] : null;
+  if (!f) return null;
+  const mimeTypes: readonly string[] = f.mimeTypes;
+  return mimeTypes.includes(mime) ? f.sourceKinds[0] : null;
 }
 function bytes(n:number){return n < 1048576 ? `${Math.round(n/1024)} Ko` : `${(n/1048576).toFixed(1)} Mo`;}
 function summary(item:DatabaseImportItem){
