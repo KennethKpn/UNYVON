@@ -65,6 +65,7 @@ export const CRITICAL_ROUTES: RouteDef[] = ROUTES.filter((r) =>
     "/products",
     "/sales",
     "/customers",
+    "/import",
   ].includes(r.path)
 );
 
