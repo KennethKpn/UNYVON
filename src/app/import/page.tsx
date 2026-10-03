@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -22,6 +22,8 @@ import { useOrg } from "@/lib/context/org-context";
 import {
   addImportDocument,
   cancelImportSession,
+  createImportSession,
+  getImportSessions,
   commitImportSession,
   decideImportItem,
   deleteImportDocument,
@@ -30,13 +32,13 @@ import {
   materializeImportDocument,
   matchImportSession,
   startImportProcessing,
-  createImportSession,
 } from "@/lib/supabase/import-actions";
 import {
   getImportReviewData,
   retryImportDocument,
   type ImportReviewData,
 } from "@/lib/supabase/import-review-actions";
+import { uploadImportDocument } from "@/lib/import/storage-client";
 import {
   IMPORT_MAX_FILE_BYTES,
   IMPORT_V1_FORMATS,
@@ -83,13 +85,19 @@ const DOCUMENT_LABELS: Record<DatabaseImportDocument["state"], string> = {
   failed: "Échec",
 };
 
-function sourceKindFor(file: File) {
+function sourceKindFor(file: File): `
+  | "pdf"
+  | "doc"
+  | "docx"
+  | "md"
+  | "image"
+` | null {
   const ext = file.name.toLowerCase().split(".").pop() ?? "";
   const format = IMPORT_V1_FORMATS.find((entry) => entry.extension === ext);
   if (!format) return null;
   const mime = file.type.split(";")[0].trim().toLowerCase();
   if (!format.mimeTypes.includes(mime)) return null;
-  return format.sourceKinds[0];
+  return format.sourceKinds[0] as never;
 }
 
 function formatBytes(bytes: number): string {
@@ -136,13 +144,7 @@ export default function ImportPage() {
   >({});
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const loadSessions = async () => {
-    const { getImportSessions } = await import("@/lib/supabase/import-actions");
-    const rows = await getImportSessions();
-    setSessions(rows);
-  };
-
-  const loadSession = async (id: string) => {
+  const loadSession = useCallback(async (id: string) => {
     setLoading(true);
     setError("");
     try {
@@ -166,7 +168,7 @@ export default function ImportPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [loadSession]);
 
   useEffect(() => {
     let cancelled = false;
@@ -174,7 +176,6 @@ export default function ImportPage() {
       try {
         const params = new URLSearchParams(window.location.search);
         const requested = params.get("session");
-        const { getImportSessions } = await import("@/lib/supabase/import-actions");
         const rows = await getImportSessions();
         if (cancelled) return;
         setSessions(rows);
@@ -290,16 +291,13 @@ export default function ImportPage() {
         const created = await addImportDocument({
           sessionId,
           originalName: file.name,
-          sourceKind: sourceKind as never,
+          sourceKind: sourceKind as NonNullable<ReturnType<typeof sourceKindFor>>,
           mimeType: file.type,
           sizeBytes: file.size,
         });
 
         try {
-          await (await import("@/lib/import/storage-client")).uploadImportDocument(
-            file,
-            created.storagePath
-          );
+          await uploadImportDocument(file, created.storagePath);
           await markImportDocumentUploaded(created.document.id);
         } catch (uploadError) {
           try {
