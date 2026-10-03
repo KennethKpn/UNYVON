@@ -23,6 +23,7 @@ import {
   type ExtractedDocument,
 } from "@/lib/import/extraction";
 import type { z } from "zod";
+import { proposeImportItemMatch, type ExistingImportEntity } from "@/lib/import/matching";
 
 type AddImportDocumentInput = z.infer<typeof addImportDocumentSchema>;
 
@@ -635,4 +636,177 @@ export async function materializeImportDocument(
   }
 
   return (data ?? []) as DatabaseImportItem[];
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 5B — Matching + revue utilisateur
+// ---------------------------------------------------------------------------
+
+function fieldFromItem(
+  item: DatabaseImportItem,
+  field: "name" | "phone" | "email"
+): { raw: string; normalized?: string | number | null } | undefined {
+  const value = item.fields[field];
+  return value ? { raw: value.raw, normalized: value.normalized } : undefined;
+}
+
+async function fetchMatchingEntities(
+  supabase: ServerSupabase,
+  organizationId: string
+): Promise<Record<"category" | "product" | "customer" | "supplier", ExistingImportEntity[]>> {
+  const [categories, products, customers, suppliers] = await Promise.all([
+    supabase.from("categories").select("id, name").eq("organization_id", organizationId).order("name"),
+    supabase.from("products").select("id, name").eq("organization_id", organizationId).order("name"),
+    supabase.from("customers").select("id, name, phone, email").eq("organization_id", organizationId).order("name"),
+    supabase.from("suppliers").select("id, name, phone, email").eq("organization_id", organizationId).order("name"),
+  ]);
+
+  const errors = [categories.error, products.error, customers.error, suppliers.error].filter(Boolean);
+  if (errors.length > 0) {
+    throw new Error(
+      `Erreur lecture des entités existantes pour le matching: ${errors.map((error) => error?.message).join("; ")}`
+    );
+  }
+
+  return {
+    category: (categories.data ?? []) as ExistingImportEntity[],
+    product: (products.data ?? []) as ExistingImportEntity[],
+    customer: (customers.data ?? []) as ExistingImportEntity[],
+    supplier: (suppliers.data ?? []) as ExistingImportEntity[],
+  };
+}
+
+export async function matchImportSession(
+  sessionId: string
+): Promise<DatabaseImportItem[]> {
+  uuidSchema.parse(sessionId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const session = await fetchSession(supabase, sessionId);
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state !== "processing" && session.state !== "needs_review") {
+    throw new Error(
+      `Matching autorisé pendant le traitement/review uniquement (état: ${session.state})`
+    );
+  }
+
+  const { data: rows, error: itemsError } = await supabase
+    .from("import_items")
+    .select("*")
+    .eq("session_id", session.id)
+    .in("status", ["pending"])
+    .order("created_at", { ascending: true });
+
+  if (itemsError) {
+    throw new Error(`Erreur lecture items à rapprocher: ${itemsError.message}`);
+  }
+
+  const items = (rows ?? []) as DatabaseImportItem[];
+  if (items.length === 0) {
+    const { data: existing, error } = await supabase
+      .from("import_items")
+      .select("*")
+      .eq("session_id", session.id)
+      .order("created_at", { ascending: true });
+    if (error) throw new Error(`Erreur lecture items: ${error.message}`);
+    return (existing ?? []) as DatabaseImportItem[];
+  }
+
+  const entities = await fetchMatchingEntities(
+    supabase,
+    session.organization_id
+  );
+
+  const proposals = items.map((item) => ({
+    item_id: item.id,
+    ...proposeImportItemMatch(
+      {
+        entityType: item.entity_type,
+        fields: {
+          name: fieldFromItem(item, "name") ?? { raw: "" },
+          ...(fieldFromItem(item, "phone")
+            ? { phone: fieldFromItem(item, "phone") }
+            : {}),
+          ...(fieldFromItem(item, "email")
+            ? { email: fieldFromItem(item, "email") }
+            : {}),
+        },
+      },
+      entities[item.entity_type]
+    ),
+  }));
+
+  const { data, error } = await supabase.rpc("apply_import_matches", {
+    p_session_id: session.id,
+    p_matches: proposals,
+  });
+
+  if (error) {
+    throw new Error(`Erreur application des propositions de matching: ${error.message}`);
+  }
+
+  return (data ?? []) as DatabaseImportItem[];
+}
+
+export async function decideImportItem(input: {
+  id: string;
+  action: "create" | "use_existing" | "update" | "ignore";
+  existingId?: string | null;
+}): Promise<DatabaseImportItem> {
+  uuidSchema.parse(input.id);
+  if (input.existingId) uuidSchema.parse(input.existingId);
+
+  if (
+    (input.action === "use_existing" || input.action === "update") &&
+    !input.existingId
+  ) {
+    throw new Error("Une entité existante est requise pour cette décision");
+  }
+  if (
+    (input.action === "create" || input.action === "ignore") &&
+    input.existingId
+  ) {
+    throw new Error("Cette décision ne doit pas cibler une entité existante");
+  }
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const { data, error } = await supabase.rpc("set_import_item_decision", {
+    p_item_id: input.id,
+    p_action: input.action,
+    p_existing_id: input.existingId ?? null,
+  });
+
+  if (error) {
+    throw new Error(`Erreur enregistrement de la décision: ${error.message}`);
+  }
+
+  return data as DatabaseImportItem;
+}
+
+export async function finalizeImportReview(
+  sessionId: string
+): Promise<DatabaseImportSession> {
+  uuidSchema.parse(sessionId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const session = await fetchSession(supabase, sessionId);
+  await requireManagerRole(supabase, session.organization_id);
+
+  const { data, error } = await supabase.rpc("finalize_import_review", {
+    p_session_id: sessionId,
+  });
+
+  if (error) {
+    throw new Error(`Erreur finalisation de la revue: ${error.message}`);
+  }
+
+  return data as DatabaseImportSession;
 }
