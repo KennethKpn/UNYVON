@@ -12,6 +12,7 @@ import {
   Users,
   Handshake,
   Receipt,
+  FileUp,
   Sparkles,
   UserCog,
   Settings,
@@ -41,6 +42,7 @@ const navItems: NavItem[] = [
   { href: "/customers", label: "Clients", icon: Users, permission: "canManageCustomers" },
   { href: "/suppliers", label: "Fournisseurs", icon: Handshake, permission: "canManageSuppliers" },
   { href: "/expenses", label: "Dépenses", icon: Receipt, permission: "canManageOrganization" },
+  { href: "/import", label: "Import intelligent", icon: FileUp, permission: "canManageOrganization" },
 ];
 
 const bottomItems: NavItem[] = [
