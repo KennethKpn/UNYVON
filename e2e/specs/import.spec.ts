@@ -71,3 +71,85 @@ test.describe("smart import — upload guidé", () => {
     await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
   });
 });
+
+
+
+test.describe("smart import — lots multi-fichiers", () => {
+  test("accepte et affiche jusqu'à 5 fichiers dans le même lot", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByRole("button", { name: "Nouvel import" }).click();
+    await page.waitForURL(/\/import\?session=[0-9a-f-]{36}$/);
+
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64"
+    );
+
+    const input = page.locator('input[aria-label="Fichiers à importer"]');
+    await expect(input).toHaveAttribute("multiple", "");
+
+    await input.setInputFiles(
+      Array.from({ length: 5 }, (_, index) => ({
+        name: `lot-${index + 1}.png`,
+        mimeType: "image/png",
+        buffer: png,
+      }))
+    );
+
+    for (let index = 1; index <= 5; index += 1) {
+      await expect(page.getByText(`lot-${index}.png`, { exact: true })).toBeVisible();
+    }
+
+    await page.getByRole("button", { name: "Annuler l'import" }).click();
+    await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
+  });
+
+  test("signale clairement un lot de plus de 5 fichiers", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByRole("button", { name: "Nouvel import" }).click();
+    await page.waitForURL(/\/import\?session=[0-9a-f-]{36}$/);
+
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64"
+    );
+
+    const input = page.locator('input[aria-label="Fichiers à importer"]');
+    await input.setInputFiles(
+      Array.from({ length: 6 }, (_, index) => ({
+        name: `too-many-${index + 1}.png`,
+        mimeType: "image/png",
+        buffer: png,
+      }))
+    );
+
+    await expect(
+      page.getByRole("alert", {
+        name: /jusqu'à 5 fichiers par lot/i,
+      })
+    ).toBeVisible();
+
+    await expect(page.getByText("too-many-1.png", { exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Annuler l'import" }).click();
+    await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
+  });
+
+  test("signale un fichier dont le format n'est pas accepté", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByRole("button", { name: "Nouvel import" }).click();
+    await page.waitForURL(/\/import\?session=[0-9a-f-]{36}$/);
+
+    const input = page.locator('input[aria-label="Fichiers à importer"]');
+    await input.setInputFiles({
+      name: "registre.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("test"),
+    });
+
+    await expect(page.getByRole("alert")).toContainText(/format non supporté/i);
+
+    await page.getByRole("button", { name: "Annuler l'import" }).click();
+    await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
+  });
+});
