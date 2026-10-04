@@ -45,6 +45,21 @@ function bytes(n:number){return n < 1048576 ? `${Math.round(n/1024)} Ko` : `${(n
 function summary(item:DatabaseImportItem){
   return Object.entries(item.fields).map(([k,v])=>`${k}: ${v.raw}`).join(" · ");
 }
+function fieldLabel(key:string):string {
+  if(key==="name") return "Nom";
+  if(key==="unit") return "Unite";
+  if(key==="cost_price") return "Prix achat";
+  if(key==="sale_price") return "Prix vente";
+  if(key==="min_stock_threshold") return "Seuil de stock";
+  if(key==="stock_quantity") return "Stock";
+  if(key==="category") return "Categorie";
+  if(key==="phone") return "Telephone";
+  if(key==="email") return "E-mail";
+  if(key==="address") return "Adresse";
+  if(key==="notes") return "Notes";
+  return key;
+}
+
 
 export default function ImportPage(){
   const { permissions } = useOrg();
