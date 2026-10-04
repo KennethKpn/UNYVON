@@ -90,23 +90,13 @@ async function tryLogin(
   }
 }
 
-/** Provisioning one-shot : inscription + parcours complet des 7 étapes. */
-async function provision(
-  page: Page,
-  email: string,
-  password: string
-): Promise<void> {
-  await page.goto(`${BASE}/signup`);
-  await page.fill('input[name="firstName"]', "E2E");
-  await page.fill('input[name="lastName"]', "Main");
-  await page.fill('input[type="email"]', email);
-  await page.fill('input[type="password"]', password);
-  await page.click('button[type="submit"]');
-  await page.waitForURL(/\/(onboarding|dashboard)/, { timeout: 30_000 });
-
+/** Parcours complet des 6 étapes d'onboarding. Le compte doit déjà exister. */
+async function completeOnboarding(page: Page): Promise<void> {
   if (page.url().includes("/dashboard")) return;
 
-  // Wizard : on avance étape par étape jusqu'au dashboard.
+  await page.waitForURL(/\/(onboarding|dashboard)/, { timeout: 30_000 });
+  if (page.url().includes("/dashboard")) return;
+
   for (let i = 0; i < 12; i++) {
     if (page.url().includes("/dashboard")) break;
 
@@ -132,7 +122,7 @@ async function provision(
       if (await ex.isVisible().catch(() => false)) await ex.click();
     } else if (heading.includes("Première vente")) {
       const qty = page.locator('input[aria-label^="Quantité pour"]').first();
-      await qty.fill("2");
+      if (await qty.count()) await qty.fill("2");
     }
 
     await primary.first().click();
@@ -142,6 +132,23 @@ async function provision(
   await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
 }
 
+/** Provisioning one-shot : inscription + parcours complet des 7 étapes. */
+async function provision(
+  page: Page,
+  email: string,
+  password: string
+): Promise<void> {
+  await page.goto(`${BASE}/signup`);
+  await page.fill('input[name="firstName"]', "E2E");
+  await page.fill('input[name="lastName"]', "Main");
+  await page.fill('input[type="email"]', email);
+  await page.fill('input[type="password"]', password);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(/\/(onboarding|dashboard)/, { timeout: 30_000 });
+
+  if (page.url().includes("/dashboard")) return;
+  await completeOnboarding(page);
+}
 export default async function globalSetup(): Promise<void> {
   // Sweep des artefacts d'audit d'un run précédent (findings.jsonl) : une seule
   // exécution par run Playwright, aucun risque de concurrence entre workers.
@@ -165,13 +172,14 @@ export default async function globalSetup(): Promise<void> {
       await provision(page, email, password);
       loggedIn = true;
     } else {
-      // Vérifie que la session ouvre bien le dashboard (org présente).
+      // Compte existant : compléter l'onboarding s'il est encore incomplet.
       await page.goto(`${BASE}/dashboard`);
       await page.waitForTimeout(2_500);
       if (page.url().includes("/login")) {
-        throw new Error(
-          "Session E2E invalide sur /dashboard — le compte fixe doit être onboarding-complet."
-        );
+        throw new Error("Session E2E invalide : connexion impossible au dashboard.");
+      }
+      if (page.url().includes("/onboarding")) {
+        await completeOnboarding(page);
       }
     }
 
