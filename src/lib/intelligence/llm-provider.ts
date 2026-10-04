@@ -4,8 +4,17 @@
 // ============================================================================
 
 import type { NovaProviderConfig, NovaContext, NovaResponse } from "./types";
+import { createGeminiInteraction } from "./gemini-client";
 
-let configuredProvider: NovaProviderConfig = { type: "fallback" };
+const envGeminiKey = process.env.GEMINI_API_KEY?.trim();
+
+let configuredProvider: NovaProviderConfig = envGeminiKey
+  ? {
+      type: "gemini",
+      apiKey: envGeminiKey,
+      model: process.env.NOVA_GEMINI_MODEL?.trim() || "gemini-3.8-flash",
+    }
+  : { type: "fallback" };
 
 export function configureNovaProvider(config: NovaProviderConfig) {
   configuredProvider = config;
@@ -64,6 +73,17 @@ Formule une réponse NOVA avec:
 1. explanation: ce qui se passe (basé sur les données)
 2. recommendation: ce qu'il faut faire
 3. actions: liste de 1-3 actions concrètes`;
+
+  if (config.type === "gemini") {
+    const response = await createGeminiInteraction({
+      input: userPrompt,
+      systemInstruction: systemPrompt,
+      tools: [],
+      previousInteractionId: null,
+    });
+
+    return parseLLMResponse(context, response.output_text ?? "");
+  }
 
   if (config.type === "openai") {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
