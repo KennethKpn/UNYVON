@@ -1,6 +1,9 @@
 "use server";
 
 import { createServerSupabase } from "@/lib/supabase/server";
+import { uuidSchema } from "@/lib/import/schemas";
+import { buildOnboardingImportStock } from "@/lib/import/onboarding-import";
+import type { DatabaseImportItem } from "@/lib/import/types";
 import { resolveMemberOrg, resolveOwnedOrg } from "@/lib/supabase/org-resolve";
 
 export type OrgActionState =
@@ -52,6 +55,120 @@ export type OnboardingState =
       hasConfirmedSale: boolean;
     }
   | { ok: false; error: "UNAUTHENTICATED" | "NOT_CONFIGURED" | string };
+
+
+export type OnboardingImportDraftState =
+  | {
+      ok: true;
+      importSessionId: string;
+      stockByProductId: Record<string, number>;
+      importedProductCount: number;
+      importedCustomerCount: number;
+      skippedStockCount: number;
+      conflictStockCount: number;
+    }
+  | { ok: false; error: "UNAUTHENTICATED" | "NOT_CONFIGURED" | string };
+
+/**
+ * Récupère les données d'un import terminé qui peuvent alimenter l'onboarding
+ * sans écrire directement dans les tables métier.
+ *
+ * Le stock est volontairement un pré-remplissage local : l'utilisateur doit
+ * encore valider l'étape 4, qui utilise le moteur métier existant.
+ */
+export async function getOnboardingImportDraftAction(
+  sessionId: string
+): Promise<OnboardingImportDraftState> {
+  const parsed = uuidSchema.safeParse(sessionId);
+  if (!parsed.success) {
+    return { ok: false, error: "Identifiant de session d'import invalide." };
+  }
+
+  let supabase;
+  try {
+    supabase = await createServerSupabase();
+  } catch {
+    return { ok: false, error: "NOT_CONFIGURED" };
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, error: "UNAUTHENTICATED" };
+  }
+
+  const orgId =
+    (await resolveOwnedOrg(supabase, user.id)) ??
+    (await resolveMemberOrg(supabase, user.id));
+
+  if (!orgId) {
+    return { ok: false, error: "Aucune organisation trouvée." };
+  }
+
+  const { data: role } = await supabase.rpc("current_org_role", {
+    org_id: orgId,
+  });
+  if (role !== "owner" && role !== "manager") {
+    return { ok: false, error: "Accès réservé aux propriétaires et managers." };
+  }
+
+  const { data: session, error: sessionError } = await supabase
+    .from("import_sessions")
+    .select("id, organization_id, state")
+    .eq("id", parsed.data)
+    .eq("organization_id", orgId)
+    .maybeSingle();
+
+  if (sessionError) {
+    return { ok: false, error: `Erreur lecture session d'import: ${sessionError.message}` };
+  }
+  if (!session) {
+    return { ok: false, error: "Session d'import introuvable." };
+  }
+  if (session.state !== "completed") {
+    return { ok: false, error: "L'import doit être terminé avant de reprendre ses données dans l'onboarding." };
+  }
+
+  const [{ data: itemRows, error: itemsError }, { data: productRows, error: productsError }] =
+    await Promise.all([
+      supabase
+        .from("import_items")
+        .select("*")
+        .eq("session_id", parsed.data)
+        .eq("organization_id", orgId)
+        .eq("status", "imported")
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("products")
+        .select("id, name")
+        .eq("organization_id", orgId)
+        .order("created_at", { ascending: true }),
+    ]);
+
+  if (itemsError) {
+    return { ok: false, error: `Erreur lecture des éléments importés: ${itemsError.message}` };
+  }
+  if (productsError) {
+    return { ok: false, error: `Erreur lecture des produits: ${productsError.message}` };
+  }
+
+  const items = (itemRows ?? []) as DatabaseImportItem[];
+  const products = (productRows ?? []) as Array<{ id: string; name: string }>;
+  const stock = buildOnboardingImportStock(items, products);
+
+  return {
+    ok: true,
+    importSessionId: session.id,
+    stockByProductId: stock.stockByProductId,
+    importedProductCount: items.filter((item) => item.entity_type === "product").length,
+    importedCustomerCount: items.filter((item) => item.entity_type === "customer").length,
+    skippedStockCount: stock.skippedItemIds.length,
+    conflictStockCount: stock.conflictItemIds.length,
+  };
+}
+
 
 export type OnboardingSyncState =
   | {
