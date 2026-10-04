@@ -35,6 +35,7 @@ const DELETABLE_DOCUMENT_STATES: readonly ImportDocumentState[] = [
   "uploading",
   "uploaded",
   "failed",
+  "extracted",
 ];
 
 // ---------------------------------------------------------------------------
@@ -362,6 +363,14 @@ export async function deleteImportDocument(documentId: string): Promise<void> {
   if (!DELETABLE_DOCUMENT_STATES.includes(document.state)) {
     throw new Error("Suppression non autorisée pour cet état du document");
   }
+
+  const session = await fetchSession(supabase, document.session_id);
+  if (["importing", "completed", "cancelled"].includes(session.state)) {
+    throw new Error(
+      "Suppression non autorisée après validation définitive de l'import"
+    );
+  }
+
   assertOwnedStoragePath(document);
 
   const { error } = await supabase
@@ -376,20 +385,65 @@ export async function deleteImportDocument(documentId: string): Promise<void> {
   const { error: storageError } = await supabase.storage
     .from("imports")
     .remove([document.storage_path]);
-  if (!storageError) return;
 
-  const { error: restoreError } = await supabase
-    .from("import_documents")
-    .insert(document);
-  if (!restoreError) {
+  if (storageError) {
+    const { error: restoreError } = await supabase
+      .from("import_documents")
+      .insert(document);
+
+    if (!restoreError) {
+      throw new Error(
+        `Objet Storage non supprimé (${storageError.message}) : document restauré, suppression à rejouer`
+      );
+    }
+
     throw new Error(
-      `Objet Storage non supprimé (${storageError.message}) : document restauré, suppression à rejouer`
+      `Objet Storage orphelin possible [${document.storage_path}] : suppression échouée (${storageError.message}) et restauration impossible (${restoreError.message})`
     );
   }
-  throw new Error(
-    `Objet Storage orphelin possible [${document.storage_path}] : suppression échouée (${storageError.message}) et restauration impossible (${restoreError.message})`
-  );
+
+  const { data: remaining, error: remainingError } = await supabase
+    .from("import_documents")
+    .select("state")
+    .eq("session_id", session.id);
+
+  if (remainingError) {
+    throw new Error(
+      `Document supprimé, mais impossible de recalculer l'état de la session: ${remainingError.message}`
+    );
+  }
+
+  const remainingDocuments = remaining ?? [];
+  let nextState = session.state;
+
+  if (remainingDocuments.length === 0) {
+    if (["processing", "needs_review", "ready"].includes(session.state)) {
+      nextState = "collecting";
+    }
+  } else if (
+    ["processing", "needs_review", "ready"].includes(session.state) &&
+    remainingDocuments.every((row) => row.state === "extracted")
+  ) {
+    nextState = "needs_review";
+  } else if (session.state === "processing") {
+    nextState = "processing";
+  }
+
+  if (nextState !== session.state) {
+    const { error: stateError } = await supabase
+      .from("import_sessions")
+      .update({ state: nextState })
+      .eq("id", session.id)
+      .eq("state", session.state);
+
+    if (stateError) {
+      throw new Error(
+        `Document supprimé, mais impossible de mettre à jour l'état de la session: ${stateError.message}`
+      );
+    }
+  }
 }
+
 
 // N'efface que l'objet appartenant À CE document : chemin conforme à la
 // structure imposée par les policies et segments org/session/document identiques
