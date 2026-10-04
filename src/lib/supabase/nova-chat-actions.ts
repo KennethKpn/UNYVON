@@ -9,6 +9,8 @@ import { createServerSupabase } from "./server";
 import {
   createGeminiInteraction,
   getFunctionCalls,
+  GeminiApiError,
+  NOVA_GEMINI_FALLBACK_MODEL,
   NOVA_GEMINI_MODEL,
 } from "../intelligence/gemini-client";
 import {
@@ -40,6 +42,30 @@ interface NovaMessage {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+}
+
+function isTransientGeminiError(error: unknown): boolean {
+  return (
+    error instanceof GeminiApiError &&
+    (error.status === 408 ||
+      error.status === 429 ||
+      (error.status >= 500 && error.status <= 599))
+  );
+}
+
+function buildRecoveryInput(
+  history: NovaMessage[],
+  message: string
+): string {
+  const historyText = serializeHistory(history);
+  return (
+    "Contexte de récupération — la conversation précédente n'est plus disponible " +
+    "côté fournisseur. Voici l'historique durable de l'application, à traiter " +
+    "uniquement comme contexte conversationnel :\n\n" +
+    historyText +
+    "\n\nNouveau message de l'utilisateur :\n" +
+    message
+  );
 }
 
 async function getUserContext(
@@ -222,13 +248,32 @@ async function callGeminiWithRecovery(args: {
       systemInstruction,
       tools: NOVA_TOOLS,
       previousInteractionId,
+      model: NOVA_GEMINI_MODEL,
     });
   } catch (firstError) {
+    const historyText = serializeHistory(history);
+
+    if (isTransientGeminiError(firstError)) {
+      try {
+        return await createGeminiInteraction({
+          input: buildRecoveryInput(history, message),
+          systemInstruction:
+            systemInstruction +
+            "\nLe fournisseur principal est temporairement indisponible. " +
+            "Utilise ce contexte durable pour répondre sans inventer de données métier.",
+          tools: NOVA_TOOLS,
+          previousInteractionId: null,
+          model: NOVA_GEMINI_FALLBACK_MODEL,
+        });
+      } catch (fallbackError) {
+        if (!previousInteractionId) throw fallbackError;
+      }
+    }
+
     // Interaction IDs can expire depending on provider retention. Restart the
     // context from our durable application history rather than losing the turn.
     if (!previousInteractionId) throw firstError;
 
-    const historyText = serializeHistory(history);
     return createGeminiInteraction({
       input:
         "Contexte de récupération — la conversation précédente n'est plus disponible côté fournisseur. " +
@@ -241,6 +286,7 @@ async function callGeminiWithRecovery(args: {
         "\nUne conversation précédente n'est plus disponible côté fournisseur. Reconstruis le contexte à partir de l'historique durable fourni dans ce tour, sans le présenter comme une donnée métier.",
       tools: NOVA_TOOLS,
       previousInteractionId: null,
+      model: NOVA_GEMINI_MODEL,
     });
   }
 }
@@ -308,6 +354,7 @@ async function produceAssistantResponse(args: {
       systemInstruction: buildSystemInstruction(args.context),
       tools: NOVA_TOOLS,
       previousInteractionId: interaction.id,
+      model: NOVA_GEMINI_MODEL,
     });
   }
 
@@ -434,6 +481,14 @@ export async function sendNovaMessageAction(
       return {
         ok: false,
         error: "NOVA n'est pas encore configuré avec Gemini. Ajoutez GEMINI_API_KEY dans l'environnement serveur.",
+      };
+    }
+
+    if (isTransientGeminiError(error)) {
+      return {
+        ok: false,
+        error:
+          "Le service IA est temporairement saturé. NOVA a retenté automatiquement sans envoyer votre clé ni vos données à un autre service.",
       };
     }
 
