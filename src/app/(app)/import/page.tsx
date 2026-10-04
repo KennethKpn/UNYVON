@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, FileUp, Loader2, Pencil, RefreshCw, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
+import { AlertCircle, Check, FileUp, Loader2, RefreshCw, ShieldCheck, Trash2, Wand2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,8 +9,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useOrg } from "@/lib/context/org-context";
 import {
   addImportDocument, cancelImportSession, commitImportSession, createImportSession,
-  decideImportItem, deleteImportDocument, deleteImportItem, finalizeImportReview, markImportDocumentUploaded,
-  materializeImportDocument, matchImportSession, startImportProcessing, getImportSessions, updateImportItemFields,
+  decideImportItem, deleteImportDocument, finalizeImportReview, markImportDocumentUploaded,
+  materializeImportDocument, matchImportSession, startImportProcessing, getImportSessions,
 } from "@/lib/supabase/import-actions";
 import { getImportReviewData, retryImportDocument, type ImportReviewData } from "@/lib/supabase/import-review-actions";
 import { uploadImportDocument } from "@/lib/import/storage-client";
@@ -25,7 +25,6 @@ const sessionLabel: Record<DatabaseImportSession["state"],string> = {
   collecting:"Collecte", processing:"Traitement", needs_review:"Revue", ready:"Prêt",
   importing:"Importation", completed:"Terminé", failed:"Échec", cancelled:"Annulé",
 };
-const fieldLabels:Record<string,string>={name:"Nom",unit:"Unité",cost_price:"Prix d’achat",sale_price:"Prix de vente",min_stock_threshold:"Seuil de stock",stock_quantity:"Stock",category:"Catégorie",phone:"Téléphone",email:"E-mail",address:"Adresse",notes:"Notes"};
 const docLabel: Record<DatabaseImportDocument["state"],string> = {
   uploading:"Upload", uploaded:"Prêt", parsing:"Lecture", parsed:"Lu",
   extracting:"Extraction", extracted:"Extrait", failed:"Échec",
@@ -114,24 +113,14 @@ export default function ImportPage(){
     try{
       if(data.session.state==="collecting") await startImportProcessing(data.session.id);
       let d=await getImportReviewData(data.session.id);
-      const pendingDocuments=d.documents.filter(x=>x.state==="uploaded");
-      let successCount=0;
-      const failedNames:string[]=[];
-      for(const doc of pendingDocuments){
-        try{await materializeImportDocument(doc.id);successCount+=1;}
-        catch{failedNames.push(doc.original_name);}
-      }
+      for(const doc of d.documents.filter(x=>x.state==="uploaded")) await materializeImportDocument(doc.id);
       d=await getImportReviewData(data.session.id);
       if(d.session.state==="needs_review") d={...d,items:await matchImportSession(data.session.id)};
-      setData(d);setSessions(x=>x.map(s=>s.id===d.session.id?d.session:s));
-      if(failedNames.length===0){
-        setNotice(pendingDocuments.length===0?"Aucun document en attente de traitement.":String(successCount)+" document"+(successCount>1?"s":"")+" traité"+(successCount>1?"s":"")+". Revue disponible.");
-      }else{
-        setNotice(String(successCount)+"/"+String(pendingDocuments.length)+" document(s) traité(s). "+String(failedNames.length)+" en échec : "+failedNames.join(", ")+". Relancez uniquement les échecs.");
-      }
+      setData(d);setSessions(x=>x.map(s=>s.id===d.session.id?d.session:s));setNotice("Traitement terminé. Revue disponible.");
     }catch(e){setError(e instanceof Error?e.message:"Erreur de traitement");await refresh();}
     finally{setBusy("")}
   }
+
   async function decide(item:DatabaseImportItem){
     const d=drafts[item.id]; if(!d) return; setBusy(`d:${item.id}`);setError("");
     try{
@@ -171,42 +160,6 @@ export default function ImportPage(){
     try{await retryImportDocument(id);await refresh();setNotice("Document remis en attente de traitement.");}
     catch(e){setError(e instanceof Error?e.message:"Relance impossible");}finally{setBusy("")}
   }
-  const beginEdit=(item:DatabaseImportItem)=>{
-    const values:Record<string,string>={};
-    Object.keys(item.fields).forEach(key=>{values[key]=item.fields[key].raw;});
-    setEditDrafts(x=>({...x,[item.id]:values}));
-    setError("");setNotice("");
-  };
-  const cancelEdit=(id:string)=>{
-    setEditDrafts(x=>{const next={...x};delete next[id];return next;});
-  };
-  const changeEdit=(id:string,key:string,value:string)=>{
-    setEditDrafts(x=>({...x,[id]:{...x[id],[key]:value}}));
-  };
-  const saveEdit=async(item:DatabaseImportItem)=>{
-    const values=editDrafts[item.id];if(!values)return;
-    setBusy("e:"+item.id);setError("");setNotice("");
-    try{
-      const updated=await updateImportItemFields({id:item.id,values});
-      setData(x=>x?{...x,items:x.items.map(i=>i.id===updated.id?updated:i)}:x);
-      cancelEdit(item.id);
-      setNotice("Élément modifié. Il doit être revalidé avant l’import.");
-    }catch(e){setError(e instanceof Error?e.message:"Modification impossible");}
-    finally{setBusy("")}
-  };
-  const removeItem=async(item:DatabaseImportItem)=>{
-    if(!window.confirm("Supprimer « "+(item.fields.name?.raw??"cet élément")+" » de la revue ?")) return;
-    setBusy("i:"+item.id);setError("");setNotice("");
-    try{
-      await deleteImportItem(item.id);
-      setData(x=>x?{...x,items:x.items.filter(i=>i.id!==item.id)}:x);
-      setEditDrafts(x=>{const next={...x};delete next[item.id];return next;});
-      setDrafts(x=>{const next={...x};delete next[item.id];return next;});
-      setNotice("Élément supprimé de la revue. Le fichier source reste conservé.");
-    }catch(e){setError(e instanceof Error?e.message:"Suppression impossible");}
-    finally{setBusy("")}
-  };
-
 
   if(!permissions?.canManageOrganization) return <div className="max-w-2xl mx-auto"><Card><CardContent className="py-12 text-center"><ShieldCheck className="w-10 h-10 mx-auto text-muted"/><h1 className="font-display text-2xl font-bold text-ink mt-3">Import intelligent</h1><p className="text-sm text-muted mt-2">Accès réservé aux propriétaires et managers.</p></CardContent></Card></div>;
   if(loading&&!data) return <div className="flex min-h-[50vh] items-center justify-center"><Loader2 className="w-7 h-7 animate-spin text-primary"/></div>;
@@ -240,7 +193,7 @@ export default function ImportPage(){
     {!data?<Card variant="elevated"><CardHeader><h2 className="font-display font-semibold text-ink">Imports récents</h2></CardHeader><CardContent>{sessions.length===0?<p className="text-sm text-muted text-center py-8">Aucun import.</p>:<div className="space-y-2">{sessions.slice(0,12).map(s=><button key={s.id} type="button" onClick={()=>open(s.id)} className="w-full flex items-center gap-3 p-3 min-h-[56px] rounded-[12px] border border-border text-left hover:bg-background"><FileUp className="w-4 h-4 text-primary"/><span className="flex-1 text-sm text-ink">#{s.id.slice(0,8)}</span><Badge variant="info">{sessionLabel[s.state]}</Badge></button>)}</div>}</CardContent></Card>:
     <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
       <Card variant="elevated"><CardHeader><div className="flex items-center justify-between"><div><h2 className="font-display font-semibold text-ink">Documents</h2><p className="text-xs text-muted mt-1">PDF, DOC, DOCX, MD, JPG, PNG, WEBP · 25 Mo</p></div>{data.session.state==="collecting"&&<Button size="sm" onClick={()=>input.current?.click()} disabled={!!busy}><FileUp className="w-4 h-4"/>Ajouter</Button>}<input ref={input} className="sr-only" type="file" multiple accept=".pdf,.doc,.docx,.md,.jpg,.jpeg,.png,.webp" onChange={e=>void filesSelected(e.target.files)} aria-label="Fichiers à importer"/></div></CardHeader><CardContent className="space-y-3">{data.documents.map(d=><div key={d.id} className="border border-border rounded-[12px] p-3"><div className="flex gap-2 items-start"><FileUp className="w-4 h-4 text-primary mt-1"/><div className="flex-1 min-w-0"><p className="text-sm font-medium text-ink truncate">{d.original_name}</p><p className="text-xs text-muted">{d.source_kind.toUpperCase()} · {bytes(d.size_bytes)}</p></div><Badge variant={d.state==="failed"?"warning":d.state==="extracted"||d.state==="uploaded"?"success":"info"}>{docLabel[d.state]}</Badge></div>{d.error_message&&<p className="text-xs text-error mt-2">{d.error_message}</p>}<div className="flex flex-wrap gap-2 mt-2">{d.state==="failed"&&<Button size="sm" variant="outline" onClick={()=>void retry(d.id)} disabled={!!busy}><RefreshCw className="w-4 h-4"/>Relancer</Button>}{["uploading","uploaded","failed"].includes(d.state)&&<Button size="sm" variant="ghost" onClick={()=>void (async()=>{setBusy(`x:${d.id}`);try{await deleteImportDocument(d.id);await refresh()}catch(e){setError(e instanceof Error?e.message:"Suppression impossible")}finally{setBusy("")}})()} disabled={!!busy}><Trash2 className="w-4 h-4"/>Supprimer</Button>}</div></div>)}{data.documents.length===0&&<p className="text-sm text-muted text-center py-8">Ajoutez un fichier.</p>}{data.documents.length>0&&data.session.state==="collecting"&&<Button className="w-full" onClick={()=>void process()} disabled={!!busy||data.documents.some(d=>d.state==="uploading")}><Wand2 className="w-4 h-4"/>Lancer le traitement</Button>}{data.session.state!=="collecting"&&data.documents.some(d=>d.state==="uploaded")&&<Button className="w-full" variant="outline" onClick={()=>void process()} disabled={!!busy}><RefreshCw className="w-4 h-4"/>Reprendre le traitement</Button>}</CardContent></Card>
-      <Card variant="elevated"><CardHeader><div className="flex items-center justify-between"><div><h2 className="font-display font-semibold text-ink">Revue</h2><p className="text-xs text-muted mt-1">{data.items.length} élément(s) · {pending} à traiter</p></div>{ready&&<Badge variant="success">Prêt</Badge>}</div></CardHeader><CardContent className="space-y-4">{data.items.length===0?<p className="text-sm text-muted text-center py-10">Aucun élément extrait.</p>:data.items.map(item=>{const draft=drafts[item.id]??{action:item.action,existingId:item.match?.existing_id??null};const editValues=editDrafts[item.id];const editing=Boolean(editValues);return <div key={item.id} className="border border-border rounded-[12px] p-4"><div className="flex flex-wrap gap-2 items-start justify-between"><div><Badge variant="info">{entityLabel[item.entity_type]}</Badge><p className="text-sm font-medium text-ink mt-2">{item.fields.name?.raw??"Nom absent"}</p>{!editing&&<p className="text-xs text-muted mt-1 break-words">{summary(item)}</p>}{editing&&<div className="mt-3 grid gap-2 sm:grid-cols-2">{Object.entries(editValues!).map(([key,value])=><label key={key} className="space-y-1"><span className="text-[11px] font-medium text-muted">{fieldLabels[key]??key}</span>{key==="address"||key==="notes"?<textarea value={value} onChange={e=>changeEdit(item.id,key,e.target.value)} rows={2} aria-label={fieldLabels[key]??key} className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-sm"/>:<input value={value} onChange={e=>changeEdit(item.id,key,e.target.value)} aria-label={fieldLabels[key]??key} className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-sm"/>}</label>)}</div>}</div>{item.match?.existing_name&&<p className="text-xs text-right text-muted">Proposé : <span className="font-medium text-ink">{item.match.existing_name}</span></p>}</div>{data.session.state==="needs_review"&&item.status!=="imported"&&<div className="mt-3 space-y-2"><div className="flex flex-wrap gap-2">{editing?<><Button size="sm" onClick={()=>void saveEdit(item)} disabled={!!busy}><Check className="w-4 h-4"/>Enregistrer</Button><Button size="sm" variant="outline" onClick={()=>cancelEdit(item.id)} disabled={!!busy}><X className="w-4 h-4"/>Annuler</Button></>:<><Button size="sm" variant="outline" onClick={()=>beginEdit(item)} disabled={!!busy}><Pencil className="w-4 h-4"/>Modifier</Button><Button size="sm" variant="ghost" onClick={()=>void removeItem(item)} disabled={!!busy}><Trash2 className="w-4 h-4"/>Supprimer l’élément</Button></>}</div><div className="grid grid-cols-2 gap-2">{actions.map(([value,label])=><button key={value} type="button" className={draft.action===value?"min-h-[44px] rounded-[10px] border border-primary bg-lavender-soft text-primary text-xs":"min-h-[44px] rounded-[10px] border border-border text-muted text-xs"} onClick={()=>setDrafts(x=>({...x,[item.id]:{action:value,existingId:value==="use_existing"||value==="update"?(x[item.id]?.existingId??item.match?.existing_id??null):null}}))}>{label}</button>)}</div>{(draft.action==="use_existing"||draft.action==="update")&&<select aria-label="Cible existante" value={draft.existingId??""} onChange={e=>setDrafts(x=>({...x,[item.id]:{...x[item.id],existingId:e.target.value||null}}))} className="w-full rounded-[10px] border border-border bg-surface px-3 text-sm"><option value="">Sélectionner une cible…</option>{opts(item).map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select>}<Button size="sm" onClick={()=>void decide(item)} disabled={!!busy||((draft.action==="use_existing"||draft.action==="update")&&!draft.existingId)}>{busy===`d:${item.id}`?<Loader2 className="w-4 h-4 animate-spin"/>:<Check className="w-4 h-4"/>}Enregistrer</Button></div>}</div>})}{ready&&<Button className="w-full" onClick={()=>void finalize()} disabled={!!busy}>Finaliser la revue</Button>}{data.session.state==="ready"&&<Button className="w-full" onClick={()=>void commit()} disabled={!!busy}>{busy==="commit"?<Loader2 className="w-4 h-4 animate-spin"/>:<ShieldCheck className="w-4 h-4"/>}Importer définitivement</Button>}{data.session.state==="completed"&&<p className="text-sm text-success flex gap-2"><Check className="w-4 h-4"/>Import terminé.</p>}</CardContent></Card>
+      <Card variant="elevated"><CardHeader><div className="flex items-center justify-between"><div><h2 className="font-display font-semibold text-ink">Revue</h2><p className="text-xs text-muted mt-1">{data.items.length} élément(s) · {pending} à traiter</p></div>{ready&&<Badge variant="success">Prêt</Badge>}</div></CardHeader><CardContent className="space-y-4">{data.items.length===0?<p className="text-sm text-muted text-center py-10">Aucun élément extrait.</p>:data.items.map(item=>{const draft=drafts[item.id]??{action:item.action,existingId:item.match?.existing_id??null};return <div key={item.id} className="border border-border rounded-[12px] p-4"><div className="flex flex-wrap gap-2 items-start justify-between"><div><Badge variant="info">{entityLabel[item.entity_type]}</Badge><p className="text-sm font-medium text-ink mt-2">{item.fields.name?.raw??"Nom absent"}</p><p className="text-xs text-muted mt-1 break-words">{summary(item)}</p></div>{item.match?.existing_name&&<p className="text-xs text-right text-muted">Proposé : <span className="font-medium text-ink">{item.match.existing_name}</span></p>}</div>{data.session.state==="needs_review"&&item.status!=="imported"&&<div className="mt-3 space-y-2"><div className="grid grid-cols-2 gap-2">{actions.map(([value,label])=><button key={value} type="button" className={draft.action===value?"min-h-[44px] rounded-[10px] border border-primary bg-lavender-soft text-primary text-xs":"min-h-[44px] rounded-[10px] border border-border text-muted text-xs"} onClick={()=>setDrafts(x=>({...x,[item.id]:{action:value,existingId:value==="use_existing"||value==="update"?(x[item.id]?.existingId??item.match?.existing_id??null):null}}))}>{label}</button>)}</div>{(draft.action==="use_existing"||draft.action==="update")&&<select aria-label="Cible existante" value={draft.existingId??""} onChange={e=>setDrafts(x=>({...x,[item.id]:{...x[item.id],existingId:e.target.value||null}}))} className="w-full rounded-[10px] border border-border bg-surface px-3 text-sm"><option value="">Sélectionner une cible…</option>{opts(item).map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select>}<Button size="sm" onClick={()=>void decide(item)} disabled={!!busy||((draft.action==="use_existing"||draft.action==="update")&&!draft.existingId)}>{busy===`d:${item.id}`?<Loader2 className="w-4 h-4 animate-spin"/>:<Check className="w-4 h-4"/>}Enregistrer</Button></div>}</div>})}{ready&&<Button className="w-full" onClick={()=>void finalize()} disabled={!!busy}>Finaliser la revue</Button>}{data.session.state==="ready"&&<Button className="w-full" onClick={()=>void commit()} disabled={!!busy}>{busy==="commit"?<Loader2 className="w-4 h-4 animate-spin"/>:<ShieldCheck className="w-4 h-4"/>}Importer définitivement</Button>}{data.session.state==="completed"&&<p className="text-sm text-success flex gap-2"><Check className="w-4 h-4"/>Import terminé.</p>}</CardContent></Card>
     </div>}
     {data&&!["completed","cancelled","importing"].includes(data.session.state)&&<div className="flex justify-end"><Button variant="ghost" size="sm" onClick={()=>void cancel()} disabled={!!busy}>Annuler l&apos;import</Button></div>}
   </div>;
