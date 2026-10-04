@@ -797,10 +797,29 @@ function normalizeReviewedValue(field: string, raw: string): string | number | n
   if (!value) return null;
 
   if (field === "cost_price" || field === "sale_price") {
-    const normalized = value
+    const cleaned = value
       .replace(/[\u00a0\s]/g, "")
-      .replace(/,/g, ".")
-      .replace(/[^0-9.-]/g, "");
+      .replace(/[^0-9,.-]/g, "");
+
+    const comma = cleaned.lastIndexOf(",");
+    const dot = cleaned.lastIndexOf(".");
+
+    let normalized = cleaned;
+    if (comma !== -1 && dot !== -1) {
+      const decimalSeparator = comma > dot ? "," : ".";
+      const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+      normalized = cleaned
+        .split(thousandsSeparator).join("")
+        .replace(decimalSeparator, ".");
+    } else if (comma !== -1) {
+      const decimals = cleaned.length - comma - 1;
+      normalized = decimals === 3
+        ? cleaned.replace(",", "")
+        : cleaned.replace(",", ".");
+    } else if ((dot !== -1 && cleaned.length - dot - 1 === 3)) {
+      normalized = cleaned.replace(".", "");
+    }
+
     const numeric = Number(normalized);
     if (!Number.isFinite(numeric) || numeric < 0) {
       throw new Error(`Valeur numérique invalide pour ${field}`);
@@ -809,10 +828,7 @@ function normalizeReviewedValue(field: string, raw: string): string | number | n
   }
 
   if (field === "min_stock_threshold" || field === "stock_quantity") {
-    const normalized = value
-      .replace(/[\u00a0\s]/g, "")
-      .replace(/,/g, "")
-      .replace(/[^0-9-]/g, "");
+    const normalized = value.replace(/[^0-9-]/g, "");
     const numeric = Number(normalized);
     if (!Number.isInteger(numeric) || numeric < 0) {
       throw new Error(`Valeur entière invalide pour ${field}`);
