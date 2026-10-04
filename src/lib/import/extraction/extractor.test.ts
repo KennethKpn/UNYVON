@@ -128,6 +128,21 @@ describe("formats V1 valides", () => {
     expect(allText).toContain("45000 FCFA");
   });
 
+  it("extrait les chaînes ASCII stockées en UTF-16LE dans un DOC legacy", async () => {
+    const text = "Facture ACME SARL 45000 FCFA";
+    const utf16 = Buffer.from(text, "utf16le");
+    const binary = Buffer.concat([
+      Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+      Buffer.from([0x00, 0x01, 0xff]),
+      utf16,
+    ]);
+    const doc = await run("doc", new Uint8Array(binary));
+
+    expect(doc.status).toBe("SUCCESS");
+    const allText = doc.pages.map((p) => p.text).join("\n");
+    expect(allText).toContain(text);
+  });
+
   it("extrait une image via le fournisseur IA multimodal", async () => {
     const provider: Provider = {
       name: "multimodal",
