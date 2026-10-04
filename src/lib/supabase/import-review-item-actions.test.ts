@@ -6,15 +6,15 @@ const SESSION = "22222222-2222-4222-8222-222222222222";
 const ITEM = "77777777-7777-4777-8777-777777777777";
 
 const state = vi.hoisted(() => ({
-  user: { id: USER } as { id: string } | null,
+  user: { id: "55555555-5555-4555-8555-555555555555" } as { id: string } | null,
   role: "owner" as string | null,
   session: {
-    id: SESSION,
-    organization_id: ORG,
+    id: "22222222-2222-4222-8222-222222222222",
+    organization_id: "11111111-1111-4111-8111-111111111111",
     state: "needs_review",
   },
   item: {
-    id: ITEM,
+    id: "77777777-7777-4777-8777-777777777777",
     session_id: SESSION,
     document_id: "33333333-3333-4333-8333-333333333333",
     organization_id: ORG,
