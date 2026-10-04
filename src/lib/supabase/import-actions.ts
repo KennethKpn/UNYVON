@@ -12,13 +12,13 @@ import {
   importStoragePathSchema,
   uuidSchema,
 } from "@/lib/import/schemas";
-import type {
-  DatabaseImportDocument,
-  DatabaseImportSession,
-  DatabaseImportItem,
-  ImportDocumentState,
-  ImportFieldProvenance,
+import {
   IMPORT_TARGET_FIELDS,
+  type DatabaseImportDocument,
+  type DatabaseImportSession,
+  type DatabaseImportItem,
+  type ImportDocumentState,
+  type ImportFieldProvenance,
 } from "@/lib/import/types";
 import {
   createDefaultProvider,
@@ -888,7 +888,7 @@ export async function updateImportItemFields(input: {
   }
 
   const values=input.values;
-  const allowedFields=Array.from(IMPORT_TARGET_FIELDS[item.entity_type]);
+  const allowedFields: readonly string[]=Array.from(IMPORT_TARGET_FIELDS[item.entity_type]);
   const unknownField=Object.keys(values).find((field)=>!allowedFields.includes(field));
   if(unknownField) {
     throw new Error(`Champ non modifiable pour cet item: ${unknownField}`);
