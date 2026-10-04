@@ -9,6 +9,8 @@ import { createServerSupabase } from "./server";
 import {
   createGeminiInteraction,
   getFunctionCalls,
+  GeminiApiError,
+  NOVA_GEMINI_FALLBACK_MODEL,
   NOVA_GEMINI_MODEL,
 } from "../intelligence/gemini-client";
 import {
@@ -40,6 +42,41 @@ interface NovaMessage {
   role: "user" | "assistant";
   content: string;
   created_at: string;
+}
+
+function normalizeNovaModel(model: unknown, hasInteraction: boolean): string {
+  const value = String(model ?? "").trim();
+  // Les conversations créées avant le durcissement pouvaient rester sur 3.8
+  // sans interaction persistée après un échec. Elles reprennent désormais le
+  // modèle stable par défaut sans migration destructive.
+  if (!hasInteraction && value === "gemini-3.8-flash") {
+    return NOVA_GEMINI_MODEL;
+  }
+  return value || NOVA_GEMINI_MODEL;
+}
+
+function isTransientGeminiError(error: unknown): boolean {
+  return (
+    error instanceof GeminiApiError &&
+    (error.status === 408 ||
+      error.status === 429 ||
+      (error.status >= 500 && error.status <= 599))
+  );
+}
+
+function buildRecoveryInput(
+  history: NovaMessage[],
+  message: string
+): string {
+  const historyText = serializeHistory(history);
+  return (
+    "Contexte de récupération — la conversation précédente n'est plus disponible " +
+    "côté fournisseur. Voici l'historique durable de l'application, à traiter " +
+    "uniquement comme contexte conversationnel :\n\n" +
+    historyText +
+    "\n\nNouveau message de l'utilisateur :\n" +
+    message
+  );
 }
 
 async function getUserContext(
@@ -147,11 +184,11 @@ async function ensureConversation(
   supabase: Awaited<ReturnType<typeof createServerSupabase>>,
   context: UserContext,
   conversationId: string | null
-): Promise<{ id: string; geminiInteractionId: string | null }> {
+): Promise<{ id: string; geminiInteractionId: string | null; model: string }> {
   if (conversationId) {
     const { data, error } = await supabase
       .from("nova_conversations")
-      .select("id, gemini_interaction_id")
+      .select("id, gemini_interaction_id, model")
       .eq("id", conversationId)
       .eq("organization_id", context.organizationId)
       .eq("user_id", context.userId)
@@ -166,6 +203,7 @@ async function ensureConversation(
       geminiInteractionId: data.gemini_interaction_id
         ? String(data.gemini_interaction_id)
         : null,
+      model: normalizeNovaModel(data.model, Boolean(data.gemini_interaction_id)),
     };
   }
 
@@ -177,7 +215,7 @@ async function ensureConversation(
       provider: "gemini",
       model: NOVA_GEMINI_MODEL,
     })
-    .select("id, gemini_interaction_id")
+    .select("id, gemini_interaction_id, model")
     .single();
 
   if (error || !data) {
@@ -187,6 +225,7 @@ async function ensureConversation(
   return {
     id: String(data.id),
     geminiInteractionId: null,
+    model: String(data.model || NOVA_GEMINI_MODEL),
   };
 }
 
@@ -213,35 +252,63 @@ async function callGeminiWithRecovery(args: {
   history: NovaMessage[];
   systemInstruction: string;
   previousInteractionId: string | null;
-}) {
-  const { message, history, systemInstruction, previousInteractionId } = args;
+  preferredModel: string;
+}): Promise<{ interaction: Awaited<ReturnType<typeof createGeminiInteraction>>; model: string }> {
+  const { message, history, systemInstruction, previousInteractionId, preferredModel } = args;
 
   try {
-    return await createGeminiInteraction({
-      input: message,
-      systemInstruction,
-      tools: NOVA_TOOLS,
-      previousInteractionId,
-    });
+    return {
+      interaction: await createGeminiInteraction({
+        input: message,
+        systemInstruction,
+        tools: NOVA_TOOLS,
+        previousInteractionId,
+        model: preferredModel,
+      }),
+      model: preferredModel,
+    };
   } catch (firstError) {
-    // Interaction IDs can expire depending on provider retention. Restart the
-    // context from our durable application history rather than losing the turn.
+    const historyText = serializeHistory(history);
+
+    if (isTransientGeminiError(firstError)) {
+      try {
+        return {
+          interaction: await createGeminiInteraction({
+            input: buildRecoveryInput(history, message),
+            systemInstruction:
+              systemInstruction +
+              "\nLe fournisseur principal est temporairement indisponible. " +
+              "Utilise ce contexte durable pour répondre sans inventer de données métier.",
+            tools: NOVA_TOOLS,
+            previousInteractionId: null,
+            model: NOVA_GEMINI_FALLBACK_MODEL,
+          }),
+          model: NOVA_GEMINI_FALLBACK_MODEL,
+        };
+      } catch (fallbackError) {
+        if (!previousInteractionId) throw fallbackError;
+      }
+    }
+
     if (!previousInteractionId) throw firstError;
 
-    const historyText = serializeHistory(history);
-    return createGeminiInteraction({
-      input:
-        "Contexte de récupération — la conversation précédente n'est plus disponible côté fournisseur. " +
-        "Voici l'historique durable de l'application, à traiter uniquement comme contexte conversationnel :\n\n" +
-        historyText +
-        "\n\nNouveau message de l'utilisateur :\n" +
-        message,
-      systemInstruction:
-        systemInstruction +
-        "\nUne conversation précédente n'est plus disponible côté fournisseur. Reconstruis le contexte à partir de l'historique durable fourni dans ce tour, sans le présenter comme une donnée métier.",
-      tools: NOVA_TOOLS,
-      previousInteractionId: null,
-    });
+    return {
+      interaction: await createGeminiInteraction({
+        input:
+          "Contexte de récupération — la conversation précédente n'est plus disponible côté fournisseur. " +
+          "Voici l'historique durable de l'application, à traiter uniquement comme contexte conversationnel:\n\n" +
+          historyText +
+          "\n\nNouveau message de l'utilisateur :\n" +
+          message,
+        systemInstruction:
+          systemInstruction +
+          "\nUne conversation précédente n'est plus disponible côté fournisseur. Reconstruis le contexte à partir de l'historique durable fourni dans ce tour, sans le présenter comme une donnée métier.",
+        tools: NOVA_TOOLS,
+        previousInteractionId: null,
+        model: preferredModel,
+      }),
+      model: preferredModel,
+    };
   }
 }
 
@@ -251,20 +318,25 @@ async function produceAssistantResponse(args: {
   message: string;
   history: NovaMessage[];
   previousInteractionId: string | null;
-}): Promise<{ content: string; interactionId: string }> {
-  let interaction = await callGeminiWithRecovery({
+  model: string;
+}): Promise<{ content: string; interactionId: string; model: string }> {
+  const recovered = await callGeminiWithRecovery({
     message: args.message,
     history: args.history,
     systemInstruction: buildSystemInstruction(args.context),
     previousInteractionId: args.previousInteractionId,
+    preferredModel: args.model,
   });
+
+  let interaction = recovered.interaction;
+  const activeModel = recovered.model;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const calls = getFunctionCalls(interaction);
     if (calls.length === 0) {
       const content = interaction.output_text?.trim();
       if (!content) throw new Error("NOVA n'a pas produit de réponse textuelle");
-      return { content, interactionId: interaction.id };
+      return { content, interactionId: interaction.id, model: activeModel };
     }
 
     const functionResults = [];
@@ -308,6 +380,7 @@ async function produceAssistantResponse(args: {
       systemInstruction: buildSystemInstruction(args.context),
       tools: NOVA_TOOLS,
       previousInteractionId: interaction.id,
+      model: activeModel,
     });
   }
 
@@ -370,6 +443,7 @@ export async function sendNovaMessageAction(
         created_at: new Date().toISOString(),
       }],
       previousInteractionId: conversation.geminiInteractionId,
+      model: conversation.model || NOVA_GEMINI_MODEL,
     });
 
     const { data: assistantMessage, error: assistantError } = await supabase
@@ -394,10 +468,12 @@ export async function sendNovaMessageAction(
 
     const updatePayload: {
       gemini_interaction_id: string;
+      model: string;
       updated_at: string;
       title?: string;
     } = {
       gemini_interaction_id: response.interactionId,
+      model: response.model,
       updated_at: new Date().toISOString(),
     };
 
@@ -434,6 +510,14 @@ export async function sendNovaMessageAction(
       return {
         ok: false,
         error: "NOVA n'est pas encore configuré avec Gemini. Ajoutez GEMINI_API_KEY dans l'environnement serveur.",
+      };
+    }
+
+    if (isTransientGeminiError(error)) {
+      return {
+        ok: false,
+        error:
+          "Le service IA est temporairement saturé. NOVA a retenté automatiquement sans envoyer votre clé ni vos données à un autre service.",
       };
     }
 

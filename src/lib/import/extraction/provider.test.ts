@@ -292,7 +292,7 @@ describe("provider.parse — openai-compatible", () => {
 
 describe("robustesse fournisseur", () => {
   it("erreur HTTP : message propre sans clé", async () => {
-    stubFetch(() => new Response("boom", { status: 500 }));
+    stubFetch(() => new Response("boom", { status: 400 }));
     const provider = createProviderFromConfig({
       type: "gemini",
       apiKey: "AIzaFakeSecretKeyDoNotLeak",
@@ -367,6 +367,87 @@ describe("robustesse fournisseur", () => {
       timeoutMs: 1234,
     });
     await provider!.parse({ kind: "text", text: "x" });
+  });
+});
+
+describe("résilience fournisseur Gemini", () => {
+  it("retente une erreur 429 transitoire puis réussit", async () => {
+    let calls = 0;
+    const spy = stubFetch((url) => {
+      calls += 1;
+      expect(url).toContain("gemini-3.7-flash");
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 429 });
+      }
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+    });
+    await expect(provider!.parse({ kind: "text", text: "Catalogue" })).resolves.toEqual(
+      JSON.parse(GEMINI_JSON)
+    );
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("bascule sur le modèle de secours après saturation persistante", async () => {
+    const urls: string[] = [];
+    const spy = stubFetch((url) => {
+      urls.push(url);
+      if (urls.length < 3) {
+        return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 503 });
+      }
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+      model: "gemini-3.7-flash",
+    });
+    await provider!.parse({ kind: "text", text: "Catalogue" });
+
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(urls[0]).toContain("gemini-3.7-flash");
+    expect(urls[1]).toContain("gemini-3.7-flash");
+    expect(urls[2]).toContain("gemini-3.6-flash");
+  });
+
+  it("envoie un PDF brut à Gemini pour le fallback documentaire", async () => {
+    const spy = stubFetch(() =>
+      new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+    });
+    await provider!.parse({
+      kind: "document",
+      mimeType: "application/pdf",
+      base64: "JVBERi0xLjQ=",
+    });
+
+    const body = JSON.parse(String(spy.mock.calls[0][1]?.body));
+    const parts = body.contents?.[0]?.parts ?? [];
+    expect(parts.some((part: { inline_data?: { mime_type?: string; data?: string } }) =>
+      part.inline_data?.mime_type === "application/pdf" &&
+      part.inline_data?.data === "JVBERi0xLjQ="
+    )).toBe(true);
   });
 });
 
