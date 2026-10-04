@@ -1,35 +1,11 @@
 -- ============================================================================
 -- UNYVON — SMART DATA IMPORT PHASE 5D
--- Onboarding bridge : extraction du stock initial sans écriture automatique.
---
--- stock_quantity est une donnée documentaire candidate, conservée dans
--- import_items.fields. Elle sert uniquement à pré-remplir l'étape 4 de
--- l'onboarding après revue + commit.
---
--- Aucun stock métier n'est écrit par import_commit à partir de ce champ.
--- L'utilisateur confirme toujours l'étape 4 via le moteur métier existant.
+-- Extension du contrat Smart Import pour conserver le stock initial
+-- documentaire dans import_items.fields. Aucun stock métier n'est créé
+-- automatiquement par le commit.
 -- ============================================================================
 
 begin;
-
--- ============================================================================
--- UNYVON — SMART DATA IMPORT PHASE 5D
--- Onboarding bridge : extraction du stock initial sans écriture automatique.
---
--- stock_quantity est une donnée documentaire candidate, conservée dans
--- import_items.fields. Elle sert uniquement à pré-remplir l'étape 4 de
--- l'onboarding après revue + commit.
---
--- Contrat de sécurité :
---   * aucune nouvelle entité SQL ;
---   * aucun stock métier écrit par import_commit ;
---   * la quantité n'est utilisée que si l'utilisateur la retrouve dans le
---     document et la confirme ensuite en passant l'étape 4 ;
---   * la validation SQL continue de rejeter tout champ hors contrat.
---
--- Cette migration remplace les fonctions 5A/5C uniquement pour étendre
--- l'allowlist du JSON produit avec stock_quantity.
--- ============================================================================
 
 -- ============================================================================
 -- UNYVON — SMART DATA IMPORT PHASE 5A
@@ -43,6 +19,8 @@ begin;
 -- les items ; elle retourne les lignes déjà matérialisées. Si la transaction
 -- échoue, tous les inserts + changements d'état sont annulés.
 -- ============================================================================
+
+begin;
 
 create or replace function public.materialize_import_document(
   p_document_id uuid,
@@ -179,7 +157,7 @@ begin
     end if;
 
     for v_key in
-      select pg_catalog.jsonb_object_keys(v_fields)
+      select key from pg_catalog.jsonb_object_keys(v_fields) as key
     loop
       if (v_entity = 'category' and v_key not in ('name'))
          or (v_entity = 'product' and v_key not in ('name', 'unit', 'cost_price', 'sale_price', 'min_stock_threshold', 'stock_quantity', 'category'))
@@ -278,6 +256,8 @@ grant execute on function public.materialize_import_document(uuid, jsonb, intege
 --   * aucun UUID métier ne vient de l'IA ou d'un payload non revalidé ;
 --   * toute erreur annule TOUT le commit et laisse la session READY/rejouable.
 -- ============================================================================
+
+begin;
 
 create or replace function public.import_commit(
   p_session_id uuid
@@ -392,7 +372,7 @@ begin
     end if;
 
     for v_key in
-      select pg_catalog.jsonb_object_keys(v_fields)
+      select key from pg_catalog.jsonb_object_keys(v_fields) as key
     loop
       v_field := v_fields->v_key;
 
@@ -682,6 +662,7 @@ begin
                category_id = case when v_fields ? 'category' then v_category_id else category_id end
          where id = v_existing_id
            and organization_id = v_session.organization_id;
+        end if;
       end if;
 
     elsif v_item.entity_type in ('customer', 'supplier') then
@@ -803,7 +784,5 @@ $$;
 
 revoke execute on function public.import_commit(uuid) from public, anon;
 grant execute on function public.import_commit(uuid) to authenticated;
-
-commit;
 
 commit;
