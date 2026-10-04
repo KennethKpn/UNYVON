@@ -5,8 +5,15 @@
 const GEMINI_INTERACTIONS_URL =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
 
+const DEFAULT_NOVA_GEMINI_MODEL = "gemini-3.7-flash";
+const MAX_TRANSIENT_RETRIES = 2;
+const RETRY_DELAY_MS = [700, 1400] as const;
+
 export const NOVA_GEMINI_MODEL =
-  process.env.NOVA_GEMINI_MODEL?.trim() || "gemini-3.8-flash";
+  process.env.NOVA_GEMINI_MODEL?.trim() || DEFAULT_NOVA_GEMINI_MODEL;
+
+export const NOVA_GEMINI_FALLBACK_MODEL =
+  process.env.NOVA_GEMINI_FALLBACK_MODEL?.trim() || "gemini-3.6-flash";
 
 export interface GeminiFunctionTool {
   type: "function";
@@ -42,6 +49,16 @@ export type GeminiInput =
       result: Array<{ type: "text"; text: string }>;
     }>;
 
+export class GeminiApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "GeminiApiError";
+    this.status = status;
+  }
+}
+
 function getGeminiApiKey(): string {
   const key = process.env.GEMINI_API_KEY?.trim();
   if (!key) {
@@ -56,38 +73,73 @@ function isValidInteractionPayload(value: unknown): value is GeminiInteraction {
   return typeof obj.id === "string" && Array.isArray(obj.steps);
 }
 
-async function requestGemini(body: Record<string, unknown>): Promise<GeminiInteraction> {
-  const response = await fetch(GEMINI_INTERACTIONS_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": getGeminiApiKey(),
-    },
-    body: JSON.stringify(body),
-    cache: "no-store",
-  });
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
 
-  const payload: unknown = await response.json().catch(() => null);
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-  if (!response.ok) {
-    const message =
-      payload &&
-      typeof payload === "object" &&
-      "error" in payload &&
-      payload.error &&
-      typeof payload.error === "object" &&
-      "message" in payload.error
-        ? String((payload.error as Record<string, unknown>).message)
-        : `Gemini API error ${response.status}`;
+async function requestGemini(
+  body: Record<string, unknown>
+): Promise<GeminiInteraction> {
+  let lastError: unknown;
 
-    throw new Error(message);
+  for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt += 1) {
+    try {
+      const response = await fetch(GEMINI_INTERACTIONS_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-goog-api-key": getGeminiApiKey(),
+        },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+
+      const payload: unknown = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        const message =
+          payload &&
+          typeof payload === "object" &&
+          "error" in payload &&
+          payload.error &&
+          typeof payload.error === "object" &&
+          "message" in payload.error
+            ? String((payload.error as Record<string, unknown>).message)
+            : `Gemini API error ${response.status}`;
+
+        const error = new GeminiApiError(message, response.status);
+        if (!isTransientStatus(response.status) || attempt === MAX_TRANSIENT_RETRIES) {
+          throw error;
+        }
+        lastError = error;
+      } else {
+        if (!isValidInteractionPayload(payload)) {
+          throw new Error("Réponse Gemini invalide");
+        }
+        return payload;
+      }
+    } catch (error) {
+      if (error instanceof GeminiApiError) {
+        if (!isTransientStatus(error.status) || attempt === MAX_TRANSIENT_RETRIES) {
+          throw error;
+        }
+        lastError = error;
+      } else {
+        // Les erreurs réseau sont généralement transitoires, mais restent
+        // bornées pour éviter de bloquer une action utilisateur.
+        if (attempt === MAX_TRANSIENT_RETRIES) throw error;
+        lastError = error;
+      }
+    }
+
+    await sleep(RETRY_DELAY_MS[attempt] ?? RETRY_DELAY_MS[RETRY_DELAY_MS.length - 1]);
   }
 
-  if (!isValidInteractionPayload(payload)) {
-    throw new Error("Réponse Gemini invalide");
-  }
-
-  return payload;
+  throw lastError instanceof Error ? lastError : new Error("Gemini indisponible");
 }
 
 export async function createGeminiInteraction(input: {
@@ -95,9 +147,10 @@ export async function createGeminiInteraction(input: {
   systemInstruction: string;
   tools: GeminiFunctionTool[];
   previousInteractionId?: string | null;
+  model?: string | null;
 }): Promise<GeminiInteraction> {
   return requestGemini({
-    model: NOVA_GEMINI_MODEL,
+    model: input.model?.trim() || NOVA_GEMINI_MODEL,
     input: input.input,
     previous_interaction_id: input.previousInteractionId || undefined,
     system_instruction: input.systemInstruction,
