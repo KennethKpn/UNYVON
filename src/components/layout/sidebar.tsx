@@ -46,7 +46,7 @@ const navItems: NavItem[] = [
 ];
 
 const bottomItems: NavItem[] = [
-  { href: "/insights", label: "NOVA", icon: Sparkles },
+  { href: "/nova", label: "NOVA", icon: Sparkles },
   { href: "/team", label: "Équipe", icon: UserCog, permission: "canManageTeam" },
   { href: "/settings", label: "Paramètres", icon: Settings, permission: "canManageOrganization" },
   { href: "/billing", label: "Abonnement", icon: CreditCard, permission: "canManageBilling" },
@@ -72,7 +72,6 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
   return (
     <>
-      {/* Desktop sidebar */}
       <aside
         className={cn(
           "hidden md:flex flex-col h-screen border-r border-border bg-surface transition-all duration-300 ease-out sticky top-0 shrink-0",
@@ -82,7 +81,6 @@ export function Sidebar({ mobileOpen, onClose }: SidebarProps) {
         <SidebarContent pathname={pathname} collapsed={collapsed} onToggleCollapse={() => setCollapsed(!collapsed)} navItems={visibleNavItems} bottomItems={visibleBottomItems} />
       </aside>
 
-      {/* Mobile sidebar */}
       <aside
         role="dialog"
         aria-modal="true"
@@ -179,9 +177,7 @@ function SidebarContent({ pathname, collapsed, navItems, bottomItems, onToggleCo
                 title={collapsed ? item.label : undefined}
               >
                 {isNova ? (
-                  <span className="w-5 h-5 shrink-0 flex items-center justify-center text-primary">
-                    ✦
-                  </span>
+                  <span className="w-5 h-5 shrink-0 flex items-center justify-center text-primary">✦</span>
                 ) : (
                   <item.icon className="w-5 h-5 shrink-0" />
                 )}
@@ -198,11 +194,7 @@ function SidebarContent({ pathname, collapsed, navItems, bottomItems, onToggleCo
           aria-label={collapsed ? "Déplier la barre latérale" : "Replier la barre latérale"}
           className="hidden md:flex items-center justify-center h-12 border-t border-border text-muted hover:text-text transition-colors"
         >
-          {collapsed ? (
-            <ChevronRight className="w-4 h-4" />
-          ) : (
-            <ChevronLeft className="w-4 h-4" />
-          )}
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       )}
     </>

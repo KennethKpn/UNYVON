@@ -4,8 +4,17 @@
 // ============================================================================
 
 import type { NovaProviderConfig, NovaContext, NovaResponse } from "./types";
+import { createGeminiInteraction } from "./gemini-client";
 
-let configuredProvider: NovaProviderConfig = { type: "fallback" };
+const envGeminiKey = process.env.GEMINI_API_KEY?.trim();
+
+let configuredProvider: NovaProviderConfig = envGeminiKey
+  ? {
+      type: "gemini",
+      apiKey: envGeminiKey,
+      model: process.env.NOVA_GEMINI_MODEL?.trim() || "gemini-3.8-flash",
+    }
+  : { type: "fallback" };
 
 export function configureNovaProvider(config: NovaProviderConfig) {
   configuredProvider = config;
@@ -52,7 +61,14 @@ Règles ABSOLUES:
 3. Tu expliques ce qui se passe, pourquoi, et ce qu'il faut faire.
 4. Tu reformules les données structurées en texte clair et concis.
 5. Réponds en français.
-6. Maximum 3 phrases pour l'explication, 2 phrases pour la recommandation.`;
+6. Maximum 3 phrases pour l'explication, 2 phrases pour la recommandation.
+7. Pour que l'application puisse parser ta réponse, utilise exactement les libellés suivants sur des lignes séparées:
+EXPLICATION: ...
+RECOMMANDATION: ...
+ACTIONS:
+- ...
+- ...
+Ne mets aucun autre texte avant EXPLICATION.`;
 
   const userPrompt = `Signal détecté: ${context.signal.title}
 Type: ${context.signal.type}
@@ -64,6 +80,17 @@ Formule une réponse NOVA avec:
 1. explanation: ce qui se passe (basé sur les données)
 2. recommendation: ce qu'il faut faire
 3. actions: liste de 1-3 actions concrètes`;
+
+  if (config.type === "gemini") {
+    const response = await createGeminiInteraction({
+      input: userPrompt,
+      systemInstruction: systemPrompt,
+      tools: [],
+      previousInteractionId: null,
+    });
+
+    return parseLLMResponse(context, response.output_text ?? "");
+  }
 
   if (config.type === "openai") {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
