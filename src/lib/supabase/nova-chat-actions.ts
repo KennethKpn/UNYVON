@@ -11,7 +11,6 @@ import {
   createGeminiInteractionWithFallback,
   getFunctionCalls,
   GeminiApiError,
-  NOVA_GEMINI_FALLBACK_MODEL,
   NOVA_GEMINI_MODEL,
 } from "../intelligence/gemini-client";
 import {
