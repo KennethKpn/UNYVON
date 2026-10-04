@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { test, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   assertClean,
   checkContrast,
@@ -125,6 +125,10 @@ test.describe("onboarding — parcours frais", () => {
         if ((await orgInput.inputValue()) === "") {
           await orgInput.fill("E2E Wizard Org");
         }
+      } else if (heading.includes("Activité")) {
+        await page.locator("textarea").fill(
+          "Nous distribuons des produits alimentaires en gros aux commerces de Cotonou."
+        );
       } else if (heading.includes("Produits")) {
         const ex = page.locator('button:has-text("Ajouter des exemples agro")');
         if (await ex.isVisible().catch(() => false)) await ex.click();
@@ -157,6 +161,14 @@ test.describe("onboarding — parcours frais", () => {
     await page.waitForURL(/\/dashboard/, { timeout: 30_000 });
     await settleRoute(page, "/dashboard");
     findings.push(...(await auditStep(page, "Dashboard")));
+
+    await page.goto("/onboarding?step=2");
+    await page.locator("textarea").waitFor({ state: "visible", timeout: 20_000 });
+    await expect(
+      page.locator("textarea")
+    ).toHaveValue(
+      "Nous distribuons des produits alimentaires en gros aux commerces de Cotonou."
+    );
 
     recordFindings(testInfo, "/onboarding", findings);
     const fails = findings.filter((f) => f.severity === "fail");
