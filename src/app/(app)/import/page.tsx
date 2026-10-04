@@ -197,45 +197,16 @@ export default function ImportPage(){
   }
 
   const beginEdit=(item:DatabaseImportItem)=>{
-    const values:Record<string,string>={};
-    Object.entries(item.fields).forEach(([key,value])=>{values[key]=value.raw;});
-    setEditDrafts(x=>({...x,[item.id]:values}));
-    setError("");setNotice("");
-  };
-  const cancelEdit=(id:string)=>{
-    setEditDrafts(x=>{const next={...x};delete next[id];return next;});
-  };
-  const changeEdit=(id:string,key:string,value:string)=>{
-    setEditDrafts(x=>({...x,[id]:{...x[id],[key]:value}}));
-  };
-  const saveEdit=async(item:DatabaseImportItem)=>{
-    const values=editDrafts[item.id];
-    if(!values)return;
-    setBusy("edit:"+item.id);setError("");setNotice("");
-    try{
-      const updated=await updateImportItemFields({id:item.id,values});
-      setData(x=>x?{...x,items:x.items.map(i=>i.id===updated.id?updated:i)}:x);
-      cancelEdit(item.id);
-      setNotice("Élément modifié. Il doit être revalidé avant l’import.");
-    }catch(e){setError(e instanceof Error?e.message:"Modification impossible");}
-    finally{setBusy("")}
-  };
-  const removeItem=async(item:DatabaseImportItem)=>{
-    if(!window.confirm("Supprimer « "+(item.fields.name?.raw??"cet élément")+" » de la revue ?")) return;
-    setBusy("item:"+item.id);setError("");setNotice("");
-    try{
-      await deleteImportItem(item.id);
-      setData(x=>x?{...x,items:x.items.filter(i=>i.id!==item.id)}:x);
-      setDrafts(x=>{const next={...x};delete next[item.id];return next;});
-      setEditDrafts(x=>{const next={...x};delete next[item.id];return next;});
-      setNotice("Élément supprimé de la revue. Le fichier source reste conservé.");
-    }catch(e){setError(e instanceof Error?e.message:"Suppression impossible");}
-    finally{setBusy("")}
-  };
+    const allowedFields = ["name", ...(item.entity_type==="product"
+      ? ["unit","cost_price","sale_price","min_stock_threshold","stock_quantity","category"]
+      : item.entity_type==="customer"||item.entity_type==="supplier"
+        ? ["phone","email","address","notes"]
+        : [])];
 
-  const beginEdit=(item:DatabaseImportItem)=>{
     const values:Record<string,string>={};
-    Object.entries(item.fields).forEach(([key,value])=>{values[key]=value.raw;});
+    for(const key of allowedFields){
+      values[key]=item.fields[key]?.raw??"";
+    }
     setEditDrafts(x=>({...x,[item.id]:values}));
     setError("");
     setNotice("");
@@ -246,12 +217,13 @@ export default function ImportPage(){
   };
 
   const changeEdit=(id:string,key:string,value:string)=>{
-    setEditDrafts(x=>({...x,[id]:{...x[id],[key]:value}}));
+    setEditDrafts(x=>({...x,[id]:{...(x[id]??{}),[key]:value}}));
   };
 
   const saveEdit=async(item:DatabaseImportItem)=>{
     const values=editDrafts[item.id];
     if(!values)return;
+
     setBusy("edit:"+item.id);
     setError("");
     setNotice("");
@@ -259,13 +231,18 @@ export default function ImportPage(){
       const updated=await updateImportItemFields({id:item.id,values});
       setData(x=>x?{...x,items:x.items.map(i=>i.id===updated.id?updated:i)}:x);
       cancelEdit(item.id);
-      setNotice("Element modifie. Il doit etre revalide avant l'import.");
-    }catch(e){setError(e instanceof Error?e.message:"Modification impossible");}
-    finally{setBusy("");}
+      setNotice("Élément modifié. La décision précédente a été réinitialisée : revérifiez puis validez.");
+    }catch(e){
+      setError(e instanceof Error?e.message:"Modification impossible");
+    }finally{
+      setBusy("");
+    }
   };
 
   const removeItem=async(item:DatabaseImportItem)=>{
-    if(!window.confirm("Supprimer cet element de la revue ?"))return;
+    const name=item.fields.name?.raw??"cet élément";
+    if(!window.confirm("Supprimer « "+name+" » de la revue ?"))return;
+
     setBusy("item:"+item.id);
     setError("");
     setNotice("");
@@ -274,9 +251,12 @@ export default function ImportPage(){
       setData(x=>x?{...x,items:x.items.filter(i=>i.id!==item.id)}:x);
       setDrafts(x=>{const next={...x};delete next[item.id];return next;});
       setEditDrafts(x=>{const next={...x};delete next[item.id];return next;});
-      setNotice("Element supprime de la revue. Le fichier source reste conserve.");
-    }catch(e){setError(e instanceof Error?e.message:"Suppression impossible");}
-    finally{setBusy("");}
+      setNotice("Élément supprimé de la revue. Le fichier source reste conservé.");
+    }catch(e){
+      setError(e instanceof Error?e.message:"Suppression impossible");
+    }finally{
+      setBusy("");
+    }
   };
 
   if(!permissions?.canManageOrganization) return <div className="max-w-2xl mx-auto"><Card><CardContent className="py-12 text-center"><ShieldCheck className="w-10 h-10 mx-auto text-muted"/><h1 className="font-display text-2xl font-bold text-ink mt-3">Import intelligent</h1><p className="text-sm text-muted mt-2">Accès réservé aux propriétaires et managers.</p></CardContent></Card></div>;
