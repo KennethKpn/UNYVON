@@ -173,11 +173,11 @@ async function ensureConversation(
   supabase: Awaited<ReturnType<typeof createServerSupabase>>,
   context: UserContext,
   conversationId: string | null
-): Promise<{ id: string; geminiInteractionId: string | null }> {
+): Promise<{ id: string; geminiInteractionId: string | null; model: string }> {
   if (conversationId) {
     const { data, error } = await supabase
       .from("nova_conversations")
-      .select("id, gemini_interaction_id")
+      .select("id, gemini_interaction_id, model")
       .eq("id", conversationId)
       .eq("organization_id", context.organizationId)
       .eq("user_id", context.userId)
@@ -192,6 +192,7 @@ async function ensureConversation(
       geminiInteractionId: data.gemini_interaction_id
         ? String(data.gemini_interaction_id)
         : null,
+      model: String(data.model || NOVA_GEMINI_MODEL),
     };
   }
 
@@ -213,6 +214,7 @@ async function ensureConversation(
   return {
     id: String(data.id),
     geminiInteractionId: null,
+    model: String(data.model || NOVA_GEMINI_MODEL),
   };
 }
 
