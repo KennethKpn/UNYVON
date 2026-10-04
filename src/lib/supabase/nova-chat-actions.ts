@@ -15,6 +15,7 @@ import {
   executeNovaTool,
   NOVA_TOOLS,
 } from "../intelligence/nova-tools";
+import { resolveMemberOrg, resolveOwnedOrg } from "./org-resolve";
 
 const MAX_USER_MESSAGE = 4000;
 const MAX_TOOL_ROUNDS = 4;
@@ -51,21 +52,29 @@ async function getUserContext(
 
   if (userError || !user) throw new Error("Non authentifié");
 
+  const organizationId =
+    (await resolveOwnedOrg(supabase, user.id)) ??
+    (await resolveMemberOrg(supabase, user.id));
+
+  if (!organizationId) {
+    throw new Error("Aucune organisation");
+  }
+
   const { data: membership, error: membershipError } = await supabase
     .from("organization_users")
     .select("organization_id, role")
+    .eq("organization_id", organizationId)
     .eq("user_id", user.id)
-    .limit(1)
     .single();
 
   if (membershipError || !membership) {
-    throw new Error("Aucune organisation");
+    throw new Error("Membership de l'organisation introuvable");
   }
 
   const { data: organization, error: organizationError } = await supabase
     .from("organizations")
     .select("name, sector, currency, activity_description")
-    .eq("id", membership.organization_id)
+    .eq("id", organizationId)
     .single();
 
   if (organizationError || !organization) {
@@ -74,7 +83,7 @@ async function getUserContext(
 
   return {
     userId: user.id,
-    organizationId: String(membership.organization_id),
+    organizationId: String(organizationId),
     role: String(membership.role),
     organization: {
       name: String(organization.name),
