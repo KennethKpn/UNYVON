@@ -116,6 +116,16 @@ export const importItemInputSchema = z.discriminatedUnion("entityType", [
   }),
 ]);
 
+export function importEditedFieldsSchema(
+  entityType: import("./types").ImportEntityType,
+  fields: unknown
+) {
+  return importFieldsSchema(entityType).safeParse(fields);
+}
+
+// Une modification manuelle ne peut changer que les valeurs extraites.
+// Les informations de provenance (confidence/page) restent attachées au champ,
+// tandis que normalized est recalculé/abandonné au commit si nécessaire.
 export const updateImportItemSchema = z
   .strictObject({
     id: uuidSchema,
