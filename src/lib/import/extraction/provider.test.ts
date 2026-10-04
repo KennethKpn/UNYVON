@@ -424,7 +424,7 @@ describe("résilience fournisseur Gemini", () => {
   });
 
   it("envoie un PDF brut à Gemini pour le fallback documentaire", async () => {
-    const spy = stubFetch((_url, init) =>
+    const spy = stubFetch(() =>
       new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
