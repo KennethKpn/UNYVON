@@ -8,6 +8,7 @@ import {
   buildImportStoragePath,
   canTransitionImportDocument,
   importFieldsSchema,
+  IMPORT_TARGET_FIELDS,
   canTransitionImportSession,
   importStoragePathSchema,
   uuidSchema,
