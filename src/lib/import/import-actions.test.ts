@@ -762,6 +762,37 @@ describe("deleteImportDocument", () => {
   });
 });
 
+describe("startImportProcessing — lots partiellement en échec", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow({ state: "collecting" })];
+    h.db.documents = [
+      h.documentRow({ id: h.DOC, state: "uploaded" }),
+      h.documentRow({
+        id: "77777777-7777-4777-8777-777777777777",
+        original_name: "page2.png",
+        state: "failed",
+      }),
+    ];
+  });
+
+  it("autorise le traitement des documents uploaded malgré un échec dans le même lot", async () => {
+    const session = await startImportProcessing(h.SESSION);
+    expect(session.state).toBe("processing");
+    expect(h.db.sessions[0].state).toBe("processing");
+  });
+
+  it("refuse uniquement lorsqu'aucun document n'est prêt", async () => {
+    h.db.documents = [
+      h.documentRow({ id: h.DOC, state: "failed" }),
+    ];
+
+    await expect(startImportProcessing(h.SESSION)).rejects.toThrow(
+      "Aucun document prêt à traiter"
+    );
+    expect(h.db.sessions[0].state).toBe("collecting");
+  });
+});
+
 describe("review item edit/delete", () => {
   const ITEM = "44444444-4444-4444-8444-444444444444";
   const EXISTING = {
