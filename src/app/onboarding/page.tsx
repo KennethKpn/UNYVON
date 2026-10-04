@@ -26,6 +26,7 @@ import {
   type OnboardingProduct,
 } from "@/lib/supabase/org-actions";
 import { cn, formatFCFA } from "@/lib/utils";
+import { SmartImportPrompt } from "@/components/import/smart-import-prompt";
 
 const steps = [
   { id: 1, label: "Entreprise", icon: Building2 },
@@ -345,6 +346,39 @@ function OnboardingWizard() {
     void handleNext();
   };
 
+
+  const ensureImportOrganization = async (): Promise<boolean> => {
+    if (orgId) return true;
+    if (!canStep1) {
+      setSyncError("Renseignez d'abord le nom de votre entreprise pour lancer l'import.");
+      return false;
+    }
+
+    setBusyStep(1);
+    try {
+      const res = await createOrganizationAction({
+        name: orgName,
+        sector,
+        currency,
+      });
+      if (!res.ok) {
+        setSyncError(friendlyError(res.error));
+        return false;
+      }
+      setOrgId(res.organizationId);
+      return true;
+    } catch (error) {
+      setSyncError(
+        error instanceof Error
+          ? error.message
+          : "Impossible de préparer votre entreprise pour l'import."
+      );
+      return false;
+    } finally {
+      setBusyStep(0);
+    }
+  };
+
   const primaryDisabled =
     busy ||
     (currentStep === 1 && !canStep1) ||
@@ -435,6 +469,15 @@ function OnboardingWizard() {
               {currentStep === 6 && "Enregistrez votre première vente pour voir le système en action."}
               {currentStep === 7 && "NOVA analyse vos données et vous donne votre premier insight."}
             </p>
+            
+            <SmartImportPrompt
+              returnTo="/onboarding"
+              step={currentStep}
+              ensureReady={ensureImportOrganization}
+              compact={false}
+              title="Gagnez du temps : importez vos données"
+              description="Au lieu de tout renseigner à la main, déposez vos documents ou prenez en photo vos registres. UNYVON prépare vos données pour vous."
+            />
 
             <div className="w-full p-6 rounded-[16px] border border-border bg-surface mb-8">
               {currentStep === 1 && (
