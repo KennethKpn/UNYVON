@@ -573,7 +573,7 @@ function ProductModal({
           </div>
 
           <div>
-            <div className="flex items-center gap-2 mb-1.5">
+            <div className="flex items-baseline gap-2 mb-1.5">
               <label
                 htmlFor="prod-category"
                 className="text-sm font-medium text-text block shrink-0"
