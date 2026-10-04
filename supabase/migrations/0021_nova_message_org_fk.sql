@@ -29,4 +29,3 @@ create policy "nova_messages_insert_owner"
     )
   );
 
-drop function if exists public.nova_conversation_matches(uuid, uuid, uuid);
