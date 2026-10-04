@@ -34,11 +34,25 @@ const docLabel: Record<DatabaseImportDocument["state"],string> = {
 
 function sourceKind(file: File): ImportSourceKind | null {
   const ext = file.name.toLowerCase().split(".").pop() ?? "";
-  const f = IMPORT_V1_FORMATS.find((x) => x.extension === ext);
-  const mime = file.type.split(";")[0].trim().toLowerCase();
-  if (!f) return null;
-  const mimeTypes: readonly string[] = f.mimeTypes;
-  return mimeTypes.includes(mime) ? f.sourceKinds[0] : null;
+  const format = IMPORT_V1_FORMATS.find((x) => x.extension === ext);
+  if (!format) return null;
+
+  const browserMime = file.type.split(";")[0].trim().toLowerCase();
+
+  // Certains navigateurs/systèmes renvoient un File.type vide pour une image.
+  // On accepte alors le MIME contractuel de l'extension. Lorsqu'un MIME est
+  // fourni, la cohérence extension ↔ MIME reste obligatoire.
+  if (!browserMime) return format.sourceKinds[0];
+
+  return (format.mimeTypes as readonly string[]).includes(browserMime)
+    ? format.sourceKinds[0]
+    : null;
+}
+
+function expectedMimeType(file: File): string {
+  const ext = file.name.toLowerCase().split(".").pop() ?? "";
+  const format = IMPORT_V1_FORMATS.find((x) => x.extension === ext);
+  return format?.mimeTypes[0] ?? file.type.split(";")[0].trim().toLowerCase();
 }
 function bytes(n:number){return n < 1048576 ? `${Math.round(n/1024)} Ko` : `${(n/1048576).toFixed(1)} Mo`;}
 function summary(item:DatabaseImportItem){
@@ -71,6 +85,7 @@ export default function ImportPage(){
   const [notice,setNotice] = useState("");
   const [drafts,setDrafts] = useState<Record<string,{action:ImportItemAction; existingId:string|null}>>({});
   const [editDrafts,setEditDrafts] = useState<Record<string,Record<string,string>>>({});
+  const [uploadErrors,setUploadErrors] = useState<string[]>([]);
   const [loading,setLoading] = useState(true);
 
   const load = useCallback(async(id:string)=>{
@@ -109,23 +124,94 @@ export default function ImportPage(){
   }
 
   async function filesSelected(files:FileList|null){
-    if(!files||!data) return; setBusy("upload");setError("");setNotice("");
-    try{
-      for(const file of Array.from(files)){
-        const kind=sourceKind(file);
-        const issue=kind?importFileIssue(file.name,file.type,kind):"Format V1 non supporté";
-        if(issue) throw new Error(issue);
-        if(file.size===0) throw new Error(`${file.name}: fichier vide`);
-        if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(`${file.name}: 25 Mo maximum`);
-        const made=await addImportDocument({sessionId:data.session.id,originalName:file.name,sourceKind:kind as ImportSourceKind,mimeType:file.type,sizeBytes:file.size});
-        try{await uploadImportDocument(file,made.storagePath);await markImportDocumentUploaded(made.document.id);}
-        catch(e){try{await deleteImportDocument(made.document.id);}catch{};throw e;}
-      }
-      setNotice("Document(s) ajouté(s)."); await refresh();
-    }catch(e){setError(e instanceof Error?e.message:"Erreur upload");await refresh();}
-    finally{setBusy("");if(input.current)input.current.value=""}
-  }
+    if(!files||!data) return;
 
+    const selected=Array.from(files);
+    setBusy("upload");setError("");setNotice("");setUploadErrors([]);
+
+    if(selected.length===0){
+      setBusy("");
+      return;
+    }
+
+    if(selected.length>5){
+      setBusy("");
+      setError("Vous pouvez importer jusqu'à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
+      if(input.current)input.current.value="";
+      return;
+    }
+
+    const results=await Promise.allSettled(
+      selected.map(async(file)=>{
+        const ext=file.name.toLowerCase().split(".").pop()??"";
+        const kind=sourceKind(file);
+        const mimeType=expectedMimeType(file);
+
+        if(!kind){
+          const browserMime=file.type.split(";")[0].trim().toLowerCase();
+          if(!IMPORT_V1_FORMATS.some(format=>format.extension===ext)){
+            throw new Error(file.name+": format non supporté (PDF, DOC, DOCX, MD, JPG, JPEG, PNG ou WEBP).");
+          }
+          throw new Error(
+            file.name+": type MIME incompatible"+(browserMime?" ("+browserMime+")":" ou inconnu")+"."
+          );
+        }
+
+        const issue=importFileIssue(file.name,mimeType,kind);
+        if(issue) throw new Error(file.name+": "+issue);
+        if(file.size===0) throw new Error(file.name+": fichier vide");
+        if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
+
+        const made=await addImportDocument({
+          sessionId:data.session.id,
+          originalName:file.name,
+          sourceKind:kind,
+          mimeType,
+          sizeBytes:file.size
+        });
+
+        try{
+          await uploadImportDocument(file,made.storagePath);
+          await markImportDocumentUploaded(made.document.id);
+          return file.name;
+        }catch(error){
+          try{await deleteImportDocument(made.document.id);}catch{}
+          throw error;
+        }
+      })
+    );
+
+    const succeeded=results.flatMap(result=>result.status==="fulfilled"?[result.value]:[]);
+    const failed=results.flatMap(result=>
+      result.status==="rejected"
+        ? [result.reason instanceof Error?result.reason.message:"Erreur upload inconnue"]
+        : []
+    );
+
+    await refresh();
+
+    if(failed.length===0){
+      setNotice(
+        succeeded.length+" fichier"+(succeeded.length>1?"s":"")+
+        " ajouté"+(succeeded.length>1?"s":"")+". Vous pouvez traiter ce lot lorsque tous les fichiers sont en état « Prêt »."
+      );
+      setError("");
+    }else{
+      setUploadErrors(failed);
+      setError(
+        failed.length+" fichier"+(failed.length>1?"s":"")+
+        " n"+(failed.length>1?"'ont":"'a")+" pas pu être ajouté"+(failed.length>1?"s":"")+". Aucun échec n'a été masqué."
+      );
+      setNotice(
+        succeeded.length
+          ? succeeded.length+"/"+selected.length+" fichiers ajoutés."
+          : "Aucun fichier n'a été ajouté. Vérifiez les erreurs ci-dessous."
+      );
+    }
+
+    setBusy("");
+    if(input.current)input.current.value="";
+  }
   async function process(){
     if(!data) return; setBusy("process");setError("");setNotice("");
     try{
@@ -261,9 +347,13 @@ export default function ImportPage(){
       </div>
     </div>
     {(error||notice)&&<div role={error?"alert":"status"} className={error?"p-3 rounded-[10px] bg-error/10 text-error text-sm":"p-3 rounded-[10px] bg-success/10 text-success text-sm"}><span className="flex items-center gap-2"><AlertCircle className="w-4 h-4"/>{error||notice}</span></div>}
+    {uploadErrors.length>0&&<div role="alert" className="p-3 rounded-[10px] border border-error/20 bg-error/5 text-error text-sm">
+      <p className="font-medium mb-1">Fichiers refusés ou échoués</p>
+      <ul className="space-y-1">{uploadErrors.map((message,index)=><li key={index}>• {message}</li>)}</ul>
+    </div>}
     {!data?<Card variant="elevated"><CardHeader><h2 className="font-display font-semibold text-ink">Imports récents</h2></CardHeader><CardContent>{sessions.length===0?<p className="text-sm text-muted text-center py-8">Aucun import.</p>:<div className="space-y-2">{sessions.slice(0,12).map(s=><button key={s.id} type="button" onClick={()=>open(s.id)} className="w-full flex items-center gap-3 p-3 min-h-[56px] rounded-[12px] border border-border text-left hover:bg-background"><FileUp className="w-4 h-4 text-primary"/><span className="flex-1 text-sm text-ink">#{s.id.slice(0,8)}</span><Badge variant="info">{sessionLabel[s.state]}</Badge></button>)}</div>}</CardContent></Card>:
     <div className="grid gap-6 lg:grid-cols-[1fr_1.4fr]">
-      <Card variant="elevated"><CardHeader><div className="flex items-center justify-between"><div><h2 className="font-display font-semibold text-ink">Documents</h2><p className="text-xs text-muted mt-1">PDF, DOC, DOCX, MD, JPG, PNG, WEBP · 25 Mo</p></div>{data.session.state==="collecting"&&<Button size="sm" onClick={()=>input.current?.click()} disabled={!!busy}><FileUp className="w-4 h-4"/>Ajouter</Button>}<input ref={input} className="sr-only" type="file" multiple accept=".pdf,.doc,.docx,.md,.jpg,.jpeg,.png,.webp" onChange={e=>void filesSelected(e.target.files)} aria-label="Fichiers à importer"/></div></CardHeader><CardContent className="space-y-3">{data.documents.map(d=><div key={d.id} className="border border-border rounded-[12px] p-3"><div className="flex gap-2 items-start"><FileUp className="w-4 h-4 text-primary mt-1"/><div className="flex-1 min-w-0"><p className="text-sm font-medium text-ink truncate">{d.original_name}</p><p className="text-xs text-muted">{d.source_kind.toUpperCase()} · {bytes(d.size_bytes)}</p></div><Badge variant={d.state==="failed"?"warning":d.state==="extracted"||d.state==="uploaded"?"success":"info"}>{docLabel[d.state]}</Badge></div>{d.error_message&&<p className="text-xs text-error mt-2">{d.error_message}</p>}<div className="flex flex-wrap gap-2 mt-2">{d.state==="failed"&&<Button size="sm" variant="outline" onClick={()=>void retry(d.id)} disabled={!!busy}><RefreshCw className="w-4 h-4"/>Relancer</Button>}{["uploading","uploaded","failed"].includes(d.state)&&<Button size="sm" variant="ghost" onClick={()=>void (async()=>{setBusy(`x:${d.id}`);try{await deleteImportDocument(d.id);await refresh()}catch(e){setError(e instanceof Error?e.message:"Suppression impossible")}finally{setBusy("")}})()} disabled={!!busy}><Trash2 className="w-4 h-4"/>Supprimer</Button>}</div></div>)}{data.documents.length===0&&<p className="text-sm text-muted text-center py-8">Ajoutez un fichier.</p>}{data.documents.length>0&&data.session.state==="collecting"&&<Button className="w-full" onClick={()=>void process()} disabled={!!busy||data.documents.some(d=>d.state==="uploading")}><Wand2 className="w-4 h-4"/>Lancer le traitement</Button>}{data.session.state!=="collecting"&&data.documents.some(d=>d.state==="uploaded")&&<Button className="w-full" variant="outline" onClick={()=>void process()} disabled={!!busy}><RefreshCw className="w-4 h-4"/>Reprendre le traitement</Button>}</CardContent></Card>
+      <Card variant="elevated"><CardHeader><div className="flex items-center justify-between"><div><h2 className="font-display font-semibold text-ink">Documents</h2><p className="text-xs text-muted mt-1">PDF, DOC, DOCX, MD, JPG, PNG, WEBP · 25 Mo · jusqu’à 5 fichiers par lot</p></div>{data.session.state==="collecting"&&<Button size="sm" onClick={()=>input.current?.click()} disabled={!!busy}><FileUp className="w-4 h-4"/>Ajouter</Button>}<input ref={input} className="sr-only" type="file" multiple accept=".pdf,.doc,.docx,.md,.jpg,.jpeg,.png,.webp,image/png,image/jpeg,image/webp,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/plain" onChange={e=>void filesSelected(e.target.files)} aria-label="Fichiers à importer"/></div></CardHeader><CardContent className="space-y-3">{data.documents.map(d=><div key={d.id} className="border border-border rounded-[12px] p-3"><div className="flex gap-2 items-start"><FileUp className="w-4 h-4 text-primary mt-1"/><div className="flex-1 min-w-0"><p className="text-sm font-medium text-ink truncate">{d.original_name}</p><p className="text-xs text-muted">{d.source_kind.toUpperCase()} · {bytes(d.size_bytes)}</p></div><Badge variant={d.state==="failed"?"warning":d.state==="extracted"||d.state==="uploaded"?"success":"info"}>{docLabel[d.state]}</Badge></div>{d.error_message&&<p className="text-xs text-error mt-2">{d.error_message}</p>}<div className="flex flex-wrap gap-2 mt-2">{d.state==="failed"&&<Button size="sm" variant="outline" onClick={()=>void retry(d.id)} disabled={!!busy}><RefreshCw className="w-4 h-4"/>Relancer</Button>}{["uploading","uploaded","failed"].includes(d.state)&&<Button size="sm" variant="ghost" onClick={()=>void (async()=>{setBusy(`x:${d.id}`);try{await deleteImportDocument(d.id);await refresh()}catch(e){setError(e instanceof Error?e.message:"Suppression impossible")}finally{setBusy("")}})()} disabled={!!busy}><Trash2 className="w-4 h-4"/>Supprimer</Button>}</div></div>)}{data.documents.length===0&&<p className="text-sm text-muted text-center py-8">Ajoutez un fichier.</p>}{data.documents.length>0&&data.session.state==="collecting"&&<Button className="w-full" onClick={()=>void process()} disabled={!!busy||data.documents.some(d=>d.state==="uploading")}><Wand2 className="w-4 h-4"/>Lancer le traitement</Button>}{data.session.state!=="collecting"&&data.documents.some(d=>d.state==="uploaded")&&<Button className="w-full" variant="outline" onClick={()=>void process()} disabled={!!busy}><RefreshCw className="w-4 h-4"/>Reprendre le traitement</Button>}</CardContent></Card>
       <Card variant="elevated"><CardHeader><div className="flex items-center justify-between"><div><h2 className="font-display font-semibold text-ink">Revue</h2><p className="text-xs text-muted mt-1">{data.items.length} élément(s) · {pending} à traiter</p></div>{ready&&<Badge variant="success">Prêt</Badge>}</div></CardHeader><CardContent className="space-y-4">{data.items.length===0?<p className="text-sm text-muted text-center py-10">Aucun élément extrait.</p>:data.items.map(item=>{const draft=drafts[item.id]??{action:item.action,existingId:item.match?.existing_id??null};const editValues=editDrafts[item.id];const editing=Boolean(editValues);return <div key={item.id} className="border border-border rounded-[12px] p-4"><div className="flex flex-wrap gap-2 items-start justify-between"><div><Badge variant="info">{entityLabel[item.entity_type]}</Badge><p className="text-sm font-medium text-ink mt-2">{item.fields.name?.raw??"Nom absent"}</p>{editing?<div className="mt-3 grid gap-3 sm:grid-cols-2">{Object.entries(editValues!).map(([key,value])=><label key={key} className="space-y-1"><span className="text-[11px] font-medium text-muted">{fieldLabel(key)}</span>{key==="address"||key==="notes"?<textarea value={value} onChange={e=>changeEdit(item.id,key,e.target.value)} rows={2} aria-label={fieldLabel(key)} className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-sm"/>:<input value={value} onChange={e=>changeEdit(item.id,key,e.target.value)} aria-label={fieldLabel(key)} className="w-full rounded-[10px] border border-border bg-surface px-3 py-2 text-sm"/>}</label>)}</div>:<p className="text-xs text-muted mt-1 break-words">{summary(item)}</p>}</div>{item.match?.existing_name&&<p className="text-xs text-right text-muted">Proposé : <span className="font-medium text-ink">{item.match.existing_name}</span></p>}</div>{data.session.state==="needs_review"&&item.status!=="imported"&&<div className="mt-3 space-y-2"><div className="flex flex-wrap gap-2">{editing?<><Button size="sm" onClick={()=>void saveEdit(item)} disabled={!!busy}>{busy==="edit:"+item.id?"Enregistrer…":"Enregistrer"}</Button><Button size="sm" variant="outline" onClick={()=>cancelEdit(item.id)} disabled={!!busy}><X className="w-4 h-4"/>Annuler</Button></>:<><Button size="sm" variant="outline" onClick={()=>beginEdit(item)} disabled={!!busy}><Pencil className="w-4 h-4"/>Modifier</Button><Button size="sm" variant="ghost" onClick={()=>void removeItem(item)} disabled={!!busy}><Trash2 className="w-4 h-4"/>Supprimer l’élément</Button></>}</div><div className="grid grid-cols-2 gap-2">{actions.map(([value,label])=><button key={value} type="button" className={draft.action===value?"min-h-[44px] rounded-[10px] border border-primary bg-lavender-soft text-primary text-xs":"min-h-[44px] rounded-[10px] border border-border text-muted text-xs"} onClick={()=>setDrafts(x=>({...x,[item.id]:{action:value,existingId:value==="use_existing"||value==="update"?(x[item.id]?.existingId??item.match?.existing_id??null):null}}))}>{label}</button>)}</div>{(draft.action==="use_existing"||draft.action==="update")&&<select aria-label="Cible existante" value={draft.existingId??""} onChange={e=>setDrafts(x=>({...x,[item.id]:{...x[item.id],existingId:e.target.value||null}}))} className="w-full rounded-[10px] border border-border bg-surface px-3 text-sm"><option value="">Sélectionner une cible…</option>{opts(item).map(o=><option key={o.id} value={o.id}>{o.name}</option>)}</select>}<Button size="sm" onClick={()=>void decide(item)} disabled={!!busy||((draft.action==="use_existing"||draft.action==="update")&&!draft.existingId)}>{busy===`d:${item.id}`?<Loader2 className="w-4 h-4 animate-spin"/>:<Check className="w-4 h-4"/>}Enregistrer</Button></div>}</div>})}{ready&&<Button className="w-full" onClick={()=>void finalize()} disabled={!!busy}>Finaliser la revue</Button>}{data.session.state==="ready"&&<Button className="w-full" onClick={()=>void commit()} disabled={!!busy}>{busy==="commit"?<Loader2 className="w-4 h-4 animate-spin"/>:<ShieldCheck className="w-4 h-4"/>}Importer définitivement</Button>}{data.session.state==="completed"&&<p className="text-sm text-success flex gap-2"><Check className="w-4 h-4"/>Import terminé.</p>}</CardContent></Card>
     </div>}
     {data&&!["completed","cancelled","importing"].includes(data.session.state)&&<div className="flex justify-end"><Button variant="ghost" size="sm" onClick={()=>void cancel()} disabled={!!busy}>Annuler l&apos;import</Button></div>}
