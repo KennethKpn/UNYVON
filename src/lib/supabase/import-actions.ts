@@ -8,6 +8,7 @@ import {
   buildImportStoragePath,
   canTransitionImportDocument,
   canTransitionImportSession,
+  importFieldsSchema,
   importStoragePathSchema,
   uuidSchema,
 } from "@/lib/import/schemas";
@@ -787,6 +788,168 @@ export async function decideImportItem(input: {
   }
 
   return data as DatabaseImportItem;
+}
+
+function normalizeEditedField(field: string, rawValue: string): string | number | null {
+  const raw = rawValue.trim();
+  if (!raw) return null;
+
+  if (field === "cost_price" || field === "sale_price") {
+    const normalized = raw
+      .replace(/[\u00a0\s]/g, "")
+      .replace(/,/g, ".")
+      .replace(/[^0-9.-]/g, "");
+    const number = Number(normalized);
+    if (!Number.isFinite(number) || number < 0) {
+      throw new Error(`Valeur numérique invalide pour ${field}`);
+    }
+    return number;
+  }
+
+  if (field === "min_stock_threshold" || field === "stock_quantity") {
+    const normalized = raw
+      .replace(/[\u00a0\s]/g, "")
+      .replace(/,/g, ".")
+      .replace(/[^0-9.-]/g, "");
+    const number = Number(normalized);
+    if (!Number.isInteger(number) || number < 0) {
+      throw new Error(`Valeur entière invalide pour ${field}`);
+    }
+    return number;
+  }
+
+  return raw;
+}
+
+function buildEditedFields(
+  entityType: DatabaseImportItem["entity_type"],
+  fields: Record<string, string>
+): DatabaseImportItem["fields"] {
+  const rebuilt = Object.fromEntries(
+    Object.entries(fields)
+      .filter(([, value]) => value.trim() !== "")
+      .map(([field, raw]) => [
+        field,
+        {
+          raw: raw.trim(),
+          normalized: normalizeEditedField(field, raw),
+          confidence: "high" as const,
+          warning: "Valeur modifiée manuellement avant validation.",
+        },
+      ])
+  );
+
+  const parsed = importFieldsSchema(entityType).safeParse(rebuilt);
+  if (!parsed.success) {
+    throw new Error(
+      parsed.error.issues.map((issue) => issue.message).join("; ")
+    );
+  }
+
+  return parsed.data as DatabaseImportItem["fields"];
+}
+
+export async function updateImportItemFields(input: {
+  id: string;
+  fields: Record<string, string>;
+}): Promise<DatabaseImportItem> {
+  uuidSchema.parse(input.id);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const { data: item, error: itemError } = await supabase
+    .from("import_items")
+    .select("*")
+    .eq("id", input.id)
+    .limit(1)
+    .maybeSingle();
+
+  if (itemError) {
+    throw new Error(`Erreur lecture élément d'import: ${itemError.message}`);
+  }
+  if (!item) throw new Error("Élément d'import introuvable");
+
+  const session = await fetchSession(supabase, String(item.session_id));
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state !== "needs_review") {
+    throw new Error(
+      `Modification autorisée pendant la revue uniquement (état: ${session.state})`
+    );
+  }
+
+  const current = item as DatabaseImportItem;
+  const editedFields = buildEditedFields(current.entity_type, input.fields);
+
+  if (!editedFields.name?.raw.trim()) {
+    throw new Error("Le nom de l'élément est obligatoire");
+  }
+
+  const { data, error } = await supabase
+    .from("import_items")
+    .update({
+      fields: editedFields,
+      match: null,
+      action: "create",
+      status: "pending",
+      error_message: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", current.id)
+    .eq("session_id", session.id)
+    .eq("organization_id", session.organization_id)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Erreur modification élément d'import: ${error?.message ?? "élément introuvable"}`
+    );
+  }
+
+  return data as DatabaseImportItem;
+}
+
+export async function deleteImportItem(itemId: string): Promise<void> {
+  uuidSchema.parse(itemId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const { data, error } = await supabase
+    .from("import_items")
+    .select("id, session_id, organization_id, status")
+    .eq("id", itemId)
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erreur lecture élément d'import: ${error.message}`);
+  }
+  if (!data) throw new Error("Élément d'import introuvable");
+
+  const session = await fetchSession(supabase, String(data.session_id));
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state !== "needs_review") {
+    throw new Error(
+      `Suppression d'un élément autorisée pendant la revue uniquement (état: ${session.state})`
+    );
+  }
+
+  const { error: deleteError } = await supabase
+    .from("import_items")
+    .delete()
+    .eq("id", String(data.id))
+    .eq("session_id", session.id)
+    .eq("organization_id", session.organization_id);
+
+  if (deleteError) {
+    throw new Error(
+      `Erreur suppression élément d'import: ${deleteError.message}`
+    );
+  }
 }
 
 export async function finalizeImportReview(
