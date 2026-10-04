@@ -14,7 +14,8 @@ import { IMPORT_TARGET_FIELDS } from "../types";
 
 export type ProviderRequest =
   | { kind: "text"; text: string }
-  | { kind: "image"; mimeType: string; base64: string };
+  | { kind: "image"; mimeType: string; base64: string }
+  | { kind: "document"; mimeType: string; base64: string };
 
 export interface Provider {
   readonly name: string;
@@ -28,9 +29,22 @@ export type ProviderConfig = {
   timeoutMs: number;
 };
 
+export class ProviderHttpError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "ProviderHttpError";
+    this.status = status;
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
-const GEMINI_MODEL = "gemini-3.8-flash";
+const GEMINI_MODEL = "gemini-3.7-flash";
+const GEMINI_FALLBACK_MODELS = ["gemini-3.6-flash"] as const;
 const OPENAI_MODEL = "gpt-4o-mini";
+const MAX_TRANSIENT_RETRIES = 1;
+const RETRY_DELAY_MS = [700] as const;
 
 const ENTITY_TYPES = Object.keys(IMPORT_TARGET_FIELDS);
 
@@ -199,12 +213,22 @@ export function resolveProviderConfig(
 ): ProviderConfig | null {
   const geminiKey = cleanKey(env.GEMINI_API_KEY);
   if (geminiKey) {
-    return { type: "gemini", apiKey: geminiKey, timeoutMs: DEFAULT_TIMEOUT_MS };
+    return {
+      type: "gemini",
+      apiKey: geminiKey,
+      model: cleanKey(env.IMPORT_GEMINI_MODEL) || GEMINI_MODEL,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    };
   }
   const openaiKey = cleanKey(env.OPENAI_API_KEY);
   if (!openaiKey) return null;
   if (openaiKey.startsWith("AIza")) {
-    return { type: "gemini", apiKey: openaiKey, timeoutMs: DEFAULT_TIMEOUT_MS };
+    return {
+      type: "gemini",
+      apiKey: openaiKey,
+      model: cleanKey(env.IMPORT_GEMINI_MODEL) || GEMINI_MODEL,
+      timeoutMs: DEFAULT_TIMEOUT_MS,
+    };
   }
   if (openaiKey.startsWith("sk-")) {
     return { type: "openai", apiKey: openaiKey, timeoutMs: DEFAULT_TIMEOUT_MS };
@@ -244,6 +268,9 @@ function buildRequestBody(
         },
       },
     };
+  }
+  if (request.kind === "document") {
+    throw new Error("Ce fournisseur ne prend pas en charge les documents binaires bruts");
   }
   if (request.kind === "image") {
     return {
@@ -308,7 +335,15 @@ function parseModelJson(text: string): unknown {
   throw new Error("Réponse du modèle : JSON invalide");
 }
 
-async function callProvider(
+function isTransientStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchProvider(
   config: ProviderConfig,
   request: ProviderRequest
 ): Promise<unknown> {
@@ -321,29 +356,77 @@ async function callProvider(
       ? { "Content-Type": "application/json", "x-goog-api-key": config.apiKey }
       : { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` };
 
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(buildRequestBody(config, request)),
-      signal: AbortSignal.timeout(config.timeoutMs),
-    });
-  } catch (error) {
-    throw new Error(
-      `Fournisseur IA indisponible: ${(error as Error).message}`
-    );
+  for (let attempt = 0; attempt <= MAX_TRANSIENT_RETRIES; attempt += 1) {
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(buildRequestBody(config, request)),
+        signal: AbortSignal.timeout(config.timeoutMs),
+      });
+    } catch (error) {
+      if (attempt === MAX_TRANSIENT_RETRIES) {
+        throw error;
+      }
+      await sleep(RETRY_DELAY_MS[attempt] ?? RETRY_DELAY_MS[RETRY_DELAY_MS.length - 1]);
+      continue;
+    }
+
+    const data: unknown = await response.json().catch(() => null);
+    if (response.ok) return data;
+
+    const message =
+      data &&
+      typeof data === "object" &&
+      "error" in data &&
+      data.error &&
+      typeof data.error === "object" &&
+      "message" in data.error
+        ? String((data.error as Record<string, unknown>).message)
+        : `Le fournisseur IA a répondu avec une erreur (HTTP ${response.status})`;
+
+    const error = new ProviderHttpError(message, response.status);
+    if (!isTransientStatus(response.status) || attempt === MAX_TRANSIENT_RETRIES) {
+      throw error;
+    }
+
+    await sleep(RETRY_DELAY_MS[attempt] ?? RETRY_DELAY_MS[RETRY_DELAY_MS.length - 1]);
   }
 
-  if (!res.ok) {
-    throw new Error(
-      `Le fournisseur IA a répondu avec une erreur (HTTP ${res.status})`
-    );
+  throw new Error("Fournisseur IA indisponible");
+}
+
+async function callProvider(
+  config: ProviderConfig,
+  request: ProviderRequest
+): Promise<unknown> {
+  const models =
+    config.type === "gemini"
+      ? Array.from(new Set([config.model ?? GEMINI_MODEL, ...GEMINI_FALLBACK_MODELS]))
+      : [config.model ?? OPENAI_MODEL];
+
+  let lastError: unknown;
+
+  for (const model of models) {
+    try {
+      const response = await fetchProvider({ ...config, model }, request);
+      return toCandidates(extractTextResponse({ ...config, model }, response));
+    } catch (error) {
+      lastError = error;
+      if (
+        config.type !== "gemini" ||
+        !(error instanceof ProviderHttpError) ||
+        !isTransientStatus(error.status)
+      ) {
+        throw error;
+      }
+    }
   }
 
-  const data: unknown = await res.json();
-  const text = extractTextResponse(config, data);
-  return toCandidates(parseModelJson(text));
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Fournisseur IA indisponible");
 }
 
 export function createProviderFromConfig(
