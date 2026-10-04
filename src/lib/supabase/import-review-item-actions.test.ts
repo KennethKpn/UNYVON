@@ -125,11 +125,28 @@ describe("review item editing", () => {
 
     expect(updated.fields.name.raw).toBe("Produit B");
     expect(updated.fields.sale_price.raw).toBe("12500");
-    expect(updated.fields.sale_price.normalized).toBeUndefined();
+    expect(updated.fields.sale_price.normalized).toBe(12500);
     expect(updated.fields.sale_price.warning).toContain("Modifié manuellement");
     expect(updated.status).toBe("pending");
     expect(updated.action).toBe("create");
     expect(updated.match).toBeNull();
+  });
+
+  it("permet d'ajouter un champ initialement absent et le normalise", async () => {
+    const updated = await updateImportItemFields({
+      id: ITEM,
+      values: {
+        name: "Produit B",
+        sale_price: "12 500 FCFA",
+        stock_quantity: "1 250",
+        unit: "carton",
+      },
+    });
+
+    expect(updated.fields.sale_price.normalized).toBe(12500);
+    expect(updated.fields.stock_quantity.normalized).toBe(1250);
+    expect(updated.fields.unit.raw).toBe("carton");
+    expect(updated.status).toBe("pending");
   });
 
   it("refuse une modification hors revue", async () => {
