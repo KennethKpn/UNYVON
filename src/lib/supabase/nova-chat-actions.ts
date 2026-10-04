@@ -221,22 +221,12 @@ async function callGeminiWithRecovery(args: {
 
     const historyText = serializeHistory(history);
     return createGeminiInteraction({
-      input: [
-        {
-          type: "function_result",
-          name: "context_recovery",
-          call_id: "context-recovery",
-          result: [
-            {
-              type: "text",
-              text: JSON.stringify({
-                message,
-                durable_history: historyText,
-              }),
-            },
-          ],
-        },
-      ],
+      input:
+        "Contexte de récupération — la conversation précédente n'est plus disponible côté fournisseur. " +
+        "Voici l'historique durable de l'application, à traiter uniquement comme contexte conversationnel :\n\n" +
+        historyText +
+        "\n\nNouveau message de l'utilisateur :\n" +
+        message,
       systemInstruction:
         systemInstruction +
         "\nUne conversation précédente n'est plus disponible côté fournisseur. Reconstruis le contexte à partir de l'historique durable fourni dans ce tour, sans le présenter comme une donnée métier.",
