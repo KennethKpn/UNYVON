@@ -727,6 +727,41 @@ describe("deleteImportDocument", () => {
     expect(h.storageCalls).toHaveLength(0);
   });
 
+  it("supprime un document extrait avant le commit et cascade ses items", async () => {
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    h.db.items = [
+      {
+        id: "item-1",
+        document_id: h.DOC,
+        session_id: h.SESSION,
+        organization_id: h.ORG,
+      },
+    ];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.documents).toHaveLength(0);
+    expect(h.db.items).toHaveLength(0);
+    expect(h.storageCalls).toHaveLength(1);
+  });
+
+  it("après suppression, repasse la session en collecting si aucun document ne reste", async () => {
+    h.db.sessions = [h.sessionRow({ state: "needs_review" })];
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.sessions[0].state).toBe("collecting");
+  });
+
+  it("après suppression, repasse la session en needs_review si les documents restants sont extraits", async () => {
+    const second = h.documentRow({
+      id: "44444444-4444-4444-8444-444444444444",
+      state: "extracted",
+      storage_path: `organizations/${h.ORG}/imports/${h.SESSION}/documents/44444444-4444-4444-8444-444444444444/second.pdf`,
+    });
+    h.db.sessions = [h.sessionRow({ state: "ready" })];
+    h.db.documents = [h.documentRow({ state: "extracted" }), second];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.sessions[0].state).toBe("needs_review");
+  });
+
   it("refuse la suppression hors des états sûrs (aucun appel Storage)", async () => {
     h.db.documents = [h.documentRow({ state: "parsed" })];
     await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
