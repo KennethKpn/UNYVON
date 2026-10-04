@@ -573,16 +573,16 @@ function ProductModal({
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center gap-2 mb-1.5">
               <label
                 htmlFor="prod-category"
-                className="text-sm font-medium text-text block"
+                className="text-sm font-medium text-text block shrink-0"
               >
                 Catégorie
               </label>
               <Link
                 href="/categories"
-                className="text-xs text-primary hover:underline"
+                className="ml-auto shrink-0 whitespace-nowrap text-xs text-primary hover:underline"
               >
                 Gérer les catégories
               </Link>
