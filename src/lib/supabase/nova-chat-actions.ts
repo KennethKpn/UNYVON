@@ -329,7 +329,7 @@ async function produceAssistantResponse(args: {
   });
 
   let interaction = recovered.interaction;
-  let activeModel = recovered.model;
+  const activeModel = recovered.model;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const calls = getFunctionCalls(interaction);
