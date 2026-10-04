@@ -65,6 +65,8 @@ function builder(table: string) {
         state.item = null as never;
         return Promise.resolve(resolve({ data: null, error: null }));
       }
+      if (operation === "select" && table === "import_sessions") return Promise.resolve(resolve({ data: [state.session], error: null }));
+      if (operation === "select" && table === "import_items" && state.item) return Promise.resolve(resolve({ data: [state.item], error: null }));
       return Promise.resolve(resolve({ data: [], error: null }));
     },
   };
