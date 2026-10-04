@@ -791,6 +791,64 @@ export async function decideImportItem(input: {
   return data as DatabaseImportItem;
 }
 
+const EDITABLE_NUMERIC_FIELDS = new Set([
+  "cost_price",
+  "sale_price",
+  "min_stock_threshold",
+  "stock_quantity",
+]);
+
+function normalizeEditedNumeric(field:string, raw:string): number {
+  const cleaned = raw
+    .trim()
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, "")
+    .replace(/(?<=\d)\.(?=\d{3}(?:\D|$))/g, "")
+    .replace(",", ".");
+
+  if(!/^\d+(?:\.\d+)?$/.test(cleaned)) {
+    throw new Error(`Valeur numérique invalide pour ${field}`);
+  }
+
+  const number = Number(cleaned);
+  if(!Number.isFinite(number) || number < 0) {
+    throw new Error(`Valeur numérique invalide pour ${field}`);
+  }
+
+  if((field==="min_stock_threshold"||field==="stock_quantity") && !Number.isInteger(number)) {
+    throw new Error(`${field} doit être un entier`);
+  }
+
+  return number;
+}
+
+function buildEditedFieldProvenance(
+  field:string,
+  raw:string,
+  previous:ImportFieldProvenance|undefined
+): ImportFieldProvenance {
+  const changed = raw !== (previous?.raw ?? "");
+
+  if(EDITABLE_NUMERIC_FIELDS.has(field)) {
+    const normalized = normalizeEditedNumeric(field, raw);
+    return {
+      raw,
+      normalized,
+      confidence:"high",
+      ...(previous?.page !== undefined ? {page:previous.page} : {}),
+      ...(changed ? {warning:"Modifié manuellement par l'utilisateur."} : {}),
+    };
+  }
+
+  return {
+    raw,
+    normalized:raw,
+    confidence:"high",
+    ...(previous?.page !== undefined ? {page:previous.page} : {}),
+    ...(changed ? {warning:"Modifié manuellement par l'utilisateur."} : {}),
+  };
+}
+
 export async function updateImportItemFields(input: {
   id: string;
   values: Record<string, string>;
@@ -800,108 +858,79 @@ export async function updateImportItemFields(input: {
   const supabase = await createServerSupabase();
   await requireAuth(supabase);
 
-  const item = await (async () => {
-    const { data, error } = await supabase
-      .from("import_items")
-      .select("*")
-      .eq("id", input.id)
-      .limit(1)
-      .maybeSingle();
+  const { data: itemData, error: itemError } = await supabase
+    .from("import_items")
+    .select("*")
+    .eq("id", input.id)
+    .limit(1)
+    .maybeSingle();
 
-    if (error) {
-      throw new Error(`Erreur lecture item d'import: ${error.message}`);
-    }
-    if (!data) throw new Error("Item d'import introuvable");
-    return data as DatabaseImportItem;
-  })();
+  if(itemError) {
+    throw new Error(`Erreur lecture item d'import: ${itemError.message}`);
+  }
+  if(!itemData) throw new Error("Item d'import introuvable");
 
-  const session = await fetchSession(supabase, item.session_id);
-  await requireManagerRole(supabase, session.organization_id);
+  const item=itemData as DatabaseImportItem;
+  const session=await fetchSession(supabase,item.session_id);
+  await requireManagerRole(supabase,session.organization_id);
 
-  if (session.state !== "needs_review") {
+  if(session.state!=="needs_review") {
     throw new Error(
       `Modification autorisée uniquement pendant la revue (session: ${session.state})`
     );
   }
-
-  if (item.status === "imported") {
+  if(item.status==="imported") {
     throw new Error("Un item déjà importé ne peut plus être modifié");
   }
-
-  if (!input.values || typeof input.values !== "object") {
+  if(!input.values || typeof input.values!=="object") {
     throw new Error("Valeurs de modification invalides");
   }
 
-  const values = input.values;
-  const existingFields = item.fields ?? {};
-
-  const unknownField = Object.keys(values).find(
-    (field) => !(field in existingFields)
-  );
-  if (unknownField) {
+  const values=input.values;
+  const allowedFields=Array.from(IMPORT_TARGET_FIELDS[item.entity_type]);
+  const unknownField=Object.keys(values).find((field)=>!allowedFields.includes(field));
+  if(unknownField) {
     throw new Error(`Champ non modifiable pour cet item: ${unknownField}`);
   }
 
-  const nextFields: Record<string, ImportFieldProvenance> = {};
+  const nextFields: Record<string,ImportFieldProvenance>={};
+  for(const field of allowedFields){
+    const supplied=Object.prototype.hasOwnProperty.call(values,field);
+    const previous=item.fields[field];
+    const raw=supplied ? String(values[field] ?? "").trim() : (previous?.raw ?? "");
 
-  for (const [field, provenance] of Object.entries(existingFields)) {
-    const raw = Object.prototype.hasOwnProperty.call(values, field)
-      ? String(values[field] ?? "").trim()
-      : provenance.raw;
-
-    if (field === "name" && raw.length === 0) {
+    if(field==="name" && raw.length===0) {
       throw new Error("Le nom est obligatoire");
     }
 
-    if (raw.length === 0) {
-      continue;
-    }
+    if(raw.length===0) continue;
 
-    const changed = raw !== provenance.raw;
-    nextFields[field] = {
-      raw,
-      confidence: provenance.confidence,
-      ...(provenance.page !== undefined ? { page: provenance.page } : {}),
-      ...(provenance.warning || changed
-        ? {
-            warning: changed
-              ? "Modifié manuellement par l'utilisateur."
-              : provenance.warning,
-          }
-        : {}),
-      ...(changed
-        ? {}
-        : provenance.normalized !== undefined
-          ? { normalized: provenance.normalized }
-          : {}),
-    };
+    nextFields[field]=buildEditedFieldProvenance(field,raw,previous);
   }
 
-  const parsed = importFieldsSchema(item.entity_type).safeParse(nextFields);
-  if (!parsed.success) {
+  const parsed=importFieldsSchema(item.entity_type).safeParse(nextFields);
+  if(!parsed.success){
     throw new Error(
-      `Données modifiées invalides: ${parsed.error.issues
-        .map((issue) => issue.message)
-        .join("; ")}`
+      `Données modifiées invalides: ${parsed.error.issues.map((issue)=>issue.message).join("; ")}`
     );
   }
 
-  const { data, error } = await supabase
+  const {data,error}=await supabase
     .from("import_items")
     .update({
-      fields: parsed.data,
-      match: null,
-      action: "create",
-      status: "pending",
-      error_message: null,
+      fields:parsed.data,
+      match:null,
+      action:"create",
+      status:"pending",
+      error_message:null,
     })
-    .eq("id", item.id)
-    .eq("session_id", session.id)
-    .eq("organization_id", session.organization_id)
+    .eq("id",item.id)
+    .eq("session_id",session.id)
+    .eq("organization_id",session.organization_id)
     .select()
     .single();
 
-  if (error || !data) {
+  if(error || !data){
     throw new Error(
       `Erreur enregistrement de la modification: ${error?.message ?? "aucune ligne mise à jour"}`
     );
@@ -909,6 +938,7 @@ export async function updateImportItemFields(input: {
 
   return data as DatabaseImportItem;
 }
+
 
 export async function deleteImportItem(itemId: string): Promise<void> {
   uuidSchema.parse(itemId);
