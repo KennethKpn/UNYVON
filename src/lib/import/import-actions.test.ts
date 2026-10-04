@@ -154,9 +154,14 @@ const h = vi.hoisted(() => {
       if (st.op === "delete") {
         if (db.deleteError) return { data: null, error: { message: db.deleteError } };
         const tableRows = TABLES[table] ?? [];
-        const toRemove = new Set(selectedRows());
+        const removedRows = selectedRows();
+        const toRemove = new Set(removedRows);
         for (let i = tableRows.length - 1; i >= 0; i--) {
           if (toRemove.has(tableRows[i])) tableRows.splice(i, 1);
+        }
+        if (table === "import_documents") {
+          const removedIds = new Set(removedRows.map((row) => row.id));
+          db.items = db.items.filter((item) => !removedIds.has(item.document_id));
         }
         return { data: [], error: null };
       }
@@ -611,6 +616,16 @@ describe("markImportDocumentUploaded", () => {
     expect(h.db.documents[0].state).toBe("parsed");
   });
 
+  it("refuse la suppression après commit définitif", async () => {
+    h.db.sessions = [h.sessionRow({ state: "completed" })];
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Suppression non autorisée après validation définitive de l'import"
+    );
+    expect(h.db.documents).toHaveLength(1);
+    expect(h.storageCalls).toHaveLength(0);
+  });
+
   it("rejette un document introuvable", async () => {
     h.db.documents = [];
     await expect(markImportDocumentUploaded(h.DOC)).rejects.toThrow(
@@ -725,6 +740,41 @@ describe("deleteImportDocument", () => {
     );
     expect(h.db.documents).toHaveLength(1);
     expect(h.storageCalls).toHaveLength(0);
+  });
+
+  it("supprime un document extrait avant le commit et cascade ses items", async () => {
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    h.db.items = [
+      {
+        id: "item-1",
+        document_id: h.DOC,
+        session_id: h.SESSION,
+        organization_id: h.ORG,
+      },
+    ];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.documents).toHaveLength(0);
+    expect(h.db.items).toHaveLength(0);
+    expect(h.storageCalls).toHaveLength(1);
+  });
+
+  it("après suppression, repasse la session en collecting si aucun document ne reste", async () => {
+    h.db.sessions = [h.sessionRow({ state: "needs_review" })];
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.sessions[0].state).toBe("collecting");
+  });
+
+  it("après suppression, repasse la session en needs_review si les documents restants sont extraits", async () => {
+    const second = h.documentRow({
+      id: "44444444-4444-4444-8444-444444444444",
+      state: "extracted",
+      storage_path: `organizations/${h.ORG}/imports/${h.SESSION}/documents/44444444-4444-4444-8444-444444444444/second.pdf`,
+    });
+    h.db.sessions = [h.sessionRow({ state: "ready" })];
+    h.db.documents = [h.documentRow({ state: "extracted" }), second];
+    await deleteImportDocument(h.DOC);
+    expect(h.db.sessions[0].state).toBe("needs_review");
   });
 
   it("refuse la suppression hors des états sûrs (aucun appel Storage)", async () => {
