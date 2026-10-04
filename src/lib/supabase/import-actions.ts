@@ -12,12 +12,13 @@ import {
   importStoragePathSchema,
   uuidSchema,
 } from "@/lib/import/schemas";
-import type {
-  DatabaseImportDocument,
-  DatabaseImportSession,
-  DatabaseImportItem,
-  ImportDocumentState,
-  ImportFieldProvenance,
+import {
+  IMPORT_TARGET_FIELDS,
+  type DatabaseImportDocument,
+  type DatabaseImportSession,
+  type DatabaseImportItem,
+  type ImportDocumentState,
+  type ImportFieldProvenance,
 } from "@/lib/import/types";
 import {
   createDefaultProvider,
@@ -791,6 +792,53 @@ export async function decideImportItem(input: {
   return data as DatabaseImportItem;
 }
 
+function normalizeReviewedValue(field: string, raw: string): string | number | null {
+  const value = raw.trim();
+  if (!value) return null;
+
+  if (field === "cost_price" || field === "sale_price") {
+    const cleaned = value
+      .replace(/[\u00a0\s]/g, "")
+      .replace(/[^0-9,.-]/g, "");
+
+    const comma = cleaned.lastIndexOf(",");
+    const dot = cleaned.lastIndexOf(".");
+
+    let normalized = cleaned;
+    if (comma !== -1 && dot !== -1) {
+      const decimalSeparator = comma > dot ? "," : ".";
+      const thousandsSeparator = decimalSeparator === "," ? "." : ",";
+      normalized = cleaned
+        .split(thousandsSeparator).join("")
+        .replace(decimalSeparator, ".");
+    } else if (comma !== -1) {
+      const decimals = cleaned.length - comma - 1;
+      normalized = decimals === 3
+        ? cleaned.replace(",", "")
+        : cleaned.replace(",", ".");
+    } else if ((dot !== -1 && cleaned.length - dot - 1 === 3)) {
+      normalized = cleaned.replace(".", "");
+    }
+
+    const numeric = Number(normalized);
+    if (!Number.isFinite(numeric) || numeric < 0) {
+      throw new Error(`Valeur numérique invalide pour ${field}`);
+    }
+    return numeric;
+  }
+
+  if (field === "min_stock_threshold" || field === "stock_quantity") {
+    const normalized = value.replace(/[^0-9-]/g, "");
+    const numeric = Number(normalized);
+    if (!Number.isInteger(numeric) || numeric < 0) {
+      throw new Error(`Valeur entière invalide pour ${field}`);
+    }
+    return numeric;
+  }
+
+  return value;
+}
+
 export async function updateImportItemFields(input: {
   id: string;
   values: Record<string, string>;
@@ -800,21 +848,19 @@ export async function updateImportItemFields(input: {
   const supabase = await createServerSupabase();
   await requireAuth(supabase);
 
-  const item = await (async () => {
-    const { data, error } = await supabase
-      .from("import_items")
-      .select("*")
-      .eq("id", input.id)
-      .limit(1)
-      .maybeSingle();
+  const { data: itemData, error: itemError } = await supabase
+    .from("import_items")
+    .select("*")
+    .eq("id", input.id)
+    .limit(1)
+    .maybeSingle();
 
-    if (error) {
-      throw new Error(`Erreur lecture item d'import: ${error.message}`);
-    }
-    if (!data) throw new Error("Item d'import introuvable");
-    return data as DatabaseImportItem;
-  })();
+  if (itemError) {
+    throw new Error(`Erreur lecture item d'import: ${itemError.message}`);
+  }
+  if (!itemData) throw new Error("Item d'import introuvable");
 
+  const item = itemData as DatabaseImportItem;
   const session = await fetchSession(supabase, item.session_id);
   await requireManagerRole(supabase, session.organization_id);
 
@@ -832,11 +878,9 @@ export async function updateImportItemFields(input: {
     throw new Error("Valeurs de modification invalides");
   }
 
-  const values = input.values;
-  const existingFields = item.fields ?? {};
-
-  const unknownField = Object.keys(values).find(
-    (field) => !(field in existingFields)
+  const allowedFields = IMPORT_TARGET_FIELDS[item.entity_type] as readonly string[];
+  const unknownField = Object.keys(input.values).find(
+    (field) => !allowedFields.includes(field)
   );
   if (unknownField) {
     throw new Error(`Champ non modifiable pour cet item: ${unknownField}`);
@@ -844,36 +888,32 @@ export async function updateImportItemFields(input: {
 
   const nextFields: Record<string, ImportFieldProvenance> = {};
 
-  for (const [field, provenance] of Object.entries(existingFields)) {
-    const raw = Object.prototype.hasOwnProperty.call(values, field)
-      ? String(values[field] ?? "").trim()
-      : provenance.raw;
+  for (const field of allowedFields) {
+    const provenance = item.fields[field];
+    const hasValue = Object.prototype.hasOwnProperty.call(input.values, field);
+    const raw = hasValue
+      ? String(input.values[field] ?? "").trim()
+      : provenance?.raw?.trim() ?? "";
 
     if (field === "name" && raw.length === 0) {
       throw new Error("Le nom est obligatoire");
     }
 
-    if (raw.length === 0) {
-      continue;
-    }
+    if (raw.length === 0) continue;
 
-    const changed = raw !== provenance.raw;
+    const changed = !provenance || raw !== provenance.raw.trim();
     nextFields[field] = {
       raw,
-      confidence: provenance.confidence,
-      ...(provenance.page !== undefined ? { page: provenance.page } : {}),
-      ...(provenance.warning || changed
-        ? {
-            warning: changed
-              ? "Modifié manuellement par l'utilisateur."
-              : provenance.warning,
-          }
-        : {}),
-      ...(changed
-        ? {}
-        : provenance.normalized !== undefined
-          ? { normalized: provenance.normalized }
-          : {}),
+      normalized: changed
+        ? normalizeReviewedValue(field, raw)
+        : provenance?.normalized !== undefined
+          ? provenance.normalized
+          : normalizeReviewedValue(field, raw),
+      confidence: "high",
+      ...(provenance?.page !== undefined ? { page: provenance.page } : {}),
+      warning: changed
+        ? "Modifié manuellement par l'utilisateur."
+        : provenance?.warning ?? undefined,
     };
   }
 
@@ -894,6 +934,7 @@ export async function updateImportItemFields(input: {
       action: "create",
       status: "pending",
       error_message: null,
+      updated_at: new Date().toISOString(),
     })
     .eq("id", item.id)
     .eq("session_id", session.id)
