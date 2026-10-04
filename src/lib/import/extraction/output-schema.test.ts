@@ -74,7 +74,7 @@ describe("14. JSON modèle invalide", () => {
   });
 });
 
-describe("15. sortie LLM inventant un champ interdit", () => {
+describe("15. sortie LLM avec champ hors contrat", () => {
   it("rejette un champ hors IMPORT_TARGET_FIELDS (invention de prix...)", () => {
     const result = validateLlmOutput({
       candidates: [
@@ -90,19 +90,19 @@ describe("15. sortie LLM inventant un champ interdit", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejette product.stock_quantity : les champs V1 sont strictement listés", () => {
+  it("accepte product.stock_quantity comme donnée documentaire de stock initial", () => {
     const result = validateLlmOutput({
       candidates: [
         {
           entityType: "product",
           fields: {
             name: { raw: "x", confidence: "high" },
-            stock_quantity: { raw: "42", confidence: "high" },
+            stock_quantity: { raw: "42", normalized: 42, confidence: "high" },
           },
         },
       ],
     });
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
   });
 });
 

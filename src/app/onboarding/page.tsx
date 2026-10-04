@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import {
   createOrganizationAction,
+  getOnboardingImportDraftAction,
   getOnboardingStateAction,
   syncOnboardingCustomers,
   syncOnboardingProducts,
@@ -104,6 +105,7 @@ function OnboardingWizard() {
   const [sector, setSector] = useState("Distribution B2B agroalimentaire");
   const [currency, setCurrency] = useState("FCFA");
   const [activity, setActivity] = useState("");
+  const [importNotice, setImportNotice] = useState("");
   const [products, setProducts] = useState<LocalProduct[]>([]);
   const [customers, setCustomers] = useState<LocalCustomer[]>([]);
   const [stockQuantities, setStockQuantities] = useState<Record<string, number>>({});
@@ -129,22 +131,55 @@ function OnboardingWizard() {
         setLoading(false);
         return;
       }
+
+      const importSessionId = new URLSearchParams(window.location.search).get("importSession");
+      const importDraft = importSessionId
+        ? await getOnboardingImportDraftAction(importSessionId)
+        : null;
+
       setOrgId(state.organization?.id ?? null);
       if (state.organization) {
         setOrgName(state.organization.name);
         setSector(state.organization.sector);
         setCurrency(state.organization.currency);
       }
+
       const hydratedProducts = state.products.map((p) => ({ ...p, key: nextKey() }));
       setProducts(hydratedProducts);
+
       const hydratedStock: Record<string, number> = {};
       for (const p of hydratedProducts) {
         if (p.id != null && state.stockQuantities[p.id] != null) {
           hydratedStock[p.key] = state.stockQuantities[p.id];
+          continue;
+        }
+        if (
+          p.id != null &&
+          importDraft?.ok &&
+          importDraft.stockByProductId[p.id] != null
+        ) {
+          hydratedStock[p.key] = importDraft.stockByProductId[p.id];
         }
       }
       setStockQuantities(hydratedStock);
+
       setCustomers(state.customers.map((c) => ({ ...c, key: nextKey() })));
+
+      if (importDraft?.ok) {
+        const stockCount = Object.keys(importDraft.stockByProductId).length;
+        const importedCount =
+          importDraft.importedProductCount + importDraft.importedCustomerCount;
+        if (importedCount > 0 || stockCount > 0) {
+          const ignored = importDraft.skippedStockCount + importDraft.conflictStockCount;
+          setImportNotice(
+            ignored > 0
+              ? `Import terminé : vos produits et clients ont été repris. ${stockCount > 0 ? "Le stock initial a aussi été pré-rempli. " : ""}${ignored} quantité(s) de stock nécessitent une vérification manuelle.`
+              : `Import terminé : vos données ont été reprises. ${stockCount > 0 ? "Le stock initial est pré-rempli à l’étape Stock. " : ""}Vérifiez les informations avant de continuer.`
+          );
+        }
+      } else if (importSessionId && importDraft && !importDraft.ok) {
+        setImportNotice("Import terminé, mais le pré-remplissage de l’onboarding n’a pas pu être chargé. Vos données importées restent enregistrées.");
+      }
       const openingCount = Object.values(hydratedStock).filter((q) => q > 0).length;
       const derivedStep = deriveStep(
         state.organization != null,
@@ -477,6 +512,15 @@ function OnboardingWizard() {
               {currentStep === 7 && "NOVA analyse vos données et vous donne votre premier insight."}
             </p>
             
+            {importNotice && (
+              <div
+                role="status"
+                className="w-full mb-4 rounded-[12px] border border-primary/20 bg-primary/5 px-4 py-3 text-xs text-primary"
+              >
+                {importNotice}
+              </div>
+            )}
+
             <SmartImportPrompt
               returnTo="/onboarding"
               step={currentStep}

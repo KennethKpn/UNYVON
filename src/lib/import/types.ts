@@ -108,6 +108,7 @@ export const IMPORT_TARGET_FIELDS = {
     "cost_price",
     "sale_price",
     "min_stock_threshold",
+    "stock_quantity",
     "category",
   ],
   customer: ["name", "phone", "email", "address", "notes"],

@@ -141,7 +141,12 @@ export default function ImportPage(){
       const returnTo=params.get("returnTo");
       const returnStep=Number(params.get("step"));
       if(returnTo==="/onboarding"){
-        router.push("/onboarding"+(Number.isInteger(returnStep)&&returnStep>=1&&returnStep<=7?"?step="+returnStep:""));
+        const onboardingParams = new URLSearchParams();
+        if(Number.isInteger(returnStep)&&returnStep>=1&&returnStep<=7){
+          onboardingParams.set("step", String(returnStep));
+        }
+        onboardingParams.set("importSession", s.id);
+        router.push("/onboarding?"+onboardingParams.toString());
         return;
       }
       setNotice("Import terminé.");

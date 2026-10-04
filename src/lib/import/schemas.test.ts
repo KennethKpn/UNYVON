@@ -299,6 +299,7 @@ describe("importItemInputSchema", () => {
       fields: {
         name: { raw: "Riz 25kg", confidence: "high" },
         sale_price: { raw: "18 500 F", normalized: 18500, confidence: "high" },
+        stock_quantity: { raw: "120", normalized: 120, confidence: "high" },
         category: { raw: "Céréales", confidence: "medium", warning: null },
       },
     };
@@ -331,6 +332,18 @@ describe("importItemInputSchema", () => {
     ).toThrow();
   });
 
+  it("accepte stock_quantity comme champ documentaire produit", () => {
+    const value = {
+      ...base,
+      entityType: "product",
+      fields: {
+        name: { raw: "Riz 25kg", confidence: "high" },
+        stock_quantity: { raw: "40", normalized: 40, confidence: "high" },
+      },
+    };
+    expect(importItemInputSchema.parse(value)).toEqual(value);
+  });
+
   it("rejette un champ hors allowlist (jamais d'invention)", () => {
     expect(() =>
       importItemInputSchema.parse({
@@ -338,7 +351,7 @@ describe("importItemInputSchema", () => {
         entityType: "product",
         fields: {
           name: { raw: "Riz 25kg", confidence: "high" },
-          stock_quantity: { raw: "40", normalized: 40, confidence: "high" },
+          stock_total_invented: { raw: "40", normalized: 40, confidence: "high" },
         },
       })
     ).toThrow();
