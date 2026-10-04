@@ -311,6 +311,7 @@ import {
   getImportSessions,
   markImportDocumentUploaded,
   markImportDocumentUploadFailed,
+  startImportProcessing,
 } from "../supabase/import-actions";
 
 beforeEach(() => {
