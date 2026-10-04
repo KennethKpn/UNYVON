@@ -242,7 +242,13 @@ function buildRequestBody(
 ): unknown {
   if (config.type === "gemini") {
     const parts: unknown[] = [];
-    if (request.kind === "image") {
+    if (request.kind === "document") {
+      parts.push({ text: SYSTEM_PROMPT });
+      parts.push({
+        inline_data: { mime_type: request.mimeType, data: request.base64 },
+      });
+      parts.push({ text: UNTRUSTED_IMAGE_NOTICE });
+    } else if (request.kind === "image") {
       parts.push({
         inline_data: { mime_type: request.mimeType, data: request.base64 },
       });
