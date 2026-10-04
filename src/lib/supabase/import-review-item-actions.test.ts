@@ -71,6 +71,9 @@ function builder(table: string) {
         state.item = null as never;
         return Promise.resolve(resolve({ data: null, error: null }));
       }
+      if (table === "import_sessions" && filters.some(([c, v]) => c === "id" && v === state.SESSION)) {
+        return Promise.resolve(resolve({ data: [state.session], error: null }));
+      }
       return Promise.resolve(resolve({ data: [], error: null }));
     },
   };
