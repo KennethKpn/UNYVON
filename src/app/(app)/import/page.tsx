@@ -137,7 +137,7 @@ export default function ImportPage(){
         pendingDocuments,
         (documentId)=>materializeImportDocument(documentId)
       );
-      const d=await getImportReviewData(data.session.id);
+      let d=await getImportReviewData(data.session.id);
       if(d.session.state==="needs_review") d={...d,items:await matchImportSession(data.session.id)};
       setData(d);setSessions(x=>x.map(s=>s.id===d.session.id?d.session:s));
       if(batch.failed.length===0){
