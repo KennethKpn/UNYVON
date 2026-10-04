@@ -468,6 +468,7 @@ export async function sendNovaMessageAction(
 
     const updatePayload: {
       gemini_interaction_id: string;
+      model: string;
       updated_at: string;
       title?: string;
     } = {
