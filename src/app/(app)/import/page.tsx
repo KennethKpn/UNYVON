@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useOrg } from "@/lib/context/org-context";
 import {
   addImportDocument, cancelImportSession, commitImportSession, createImportSession,
-  decideImportItem, deleteImportDocument, deleteImportItem, finalizeImportReview, markImportDocumentUploaded,
+  decideImportItem, deleteImportDocument, deleteImportItem, finalizeImportReview, markImportDocumentUploaded, markImportDocumentUploadFailed,
   updateImportItemFields,
   materializeImportDocument, matchImportSession, startImportProcessing, getImportSessions,
 } from "@/lib/supabase/import-actions";
@@ -17,7 +17,7 @@ import { getImportReviewData, retryImportDocument, type ImportReviewData } from 
 import { uploadImportDocument } from "@/lib/import/storage-client";
 import { resolveImportFileType } from "@/lib/import/file-selection";
 import { processImportDocumentBatch } from "@/lib/import/batch-processing";
-import { IMPORT_MAX_FILE_BYTES, IMPORT_V1_FORMATS, type ImportItemAction, type ImportSourceKind, type DatabaseImportDocument, type DatabaseImportItem, type DatabaseImportSession } from "@/lib/import/types";
+import { IMPORT_MAX_FILE_BYTES, type ImportItemAction, type DatabaseImportDocument, type DatabaseImportItem, type DatabaseImportSession } from "@/lib/import/types";
 
 const actions: Array<[ImportItemAction,string]> = [
   ["create","Créer"],["use_existing","Utiliser l’existant"],["update","Mettre à jour"],["ignore","Ignorer"],
