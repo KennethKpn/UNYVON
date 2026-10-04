@@ -6,6 +6,7 @@ import Link from "next/link";
 import {
   ArrowUp,
   Bot,
+  CheckCircle2,
   History,
   Loader2,
   Plus,
@@ -132,7 +133,9 @@ export default function NovaPage() {
     if (!result.ok) {
       setError(result.error);
       setSending(false);
-      setMessages((current) => current.filter((item) => item.id !== optimistic.id));
+      setMessages((current) =>
+        current.filter((item) => item.id !== optimistic.id)
+      );
       setInput(message);
       return;
     }
@@ -155,160 +158,200 @@ export default function NovaPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto flex flex-col gap-5 h-[calc(100vh-7rem)] min-h-[560px]">
-      <div className="flex items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-[12px] bg-lavender-soft flex items-center justify-center">
-            <Sparkles className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="font-display text-2xl font-bold text-ink">NOVA</h1>
-            <p className="text-sm text-muted">
-              Votre assistant de gestion dans UNYVON
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Link href="/insights">
-            <Button variant="outline" size="sm">
-              <History className="w-4 h-4" />
-              Signaux
-            </Button>
-          </Link>
-          <Button variant="secondary" size="sm" onClick={startNewConversation} disabled={sending}>
-            <Plus className="w-4 h-4" />
-            Nouvelle conversation
-          </Button>
-        </div>
-      </div>
-
-      <Card variant="elevated" className="flex-1 min-h-0 flex flex-col overflow-hidden border-primary/15">
-        <div
-          ref={scrollRef}
-          className="flex-1 min-h-0 overflow-y-auto p-5 md:p-6 space-y-5"
-          aria-live="polite"
-        >
-          {loadingHistory ? (
-            <div className="h-full flex items-center justify-center text-sm text-muted">
-              <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              Chargement de votre conversation…
+    <div className="mx-auto flex h-[calc(100vh-6.5rem)] min-h-[600px] max-w-6xl flex-col gap-4">
+      <section className="shrink-0 rounded-2xl border border-primary/15 bg-lavender-soft/60 p-4 md:p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary text-white shadow-sm">
+              <Sparkles className="h-5 w-5" />
             </div>
-          ) : messages.length === 0 ? (
-            <div className="max-w-2xl mx-auto h-full flex flex-col items-center justify-center text-center">
-              <div className="w-14 h-14 rounded-2xl bg-lavender-soft flex items-center justify-center mb-4">
-                <Bot className="w-7 h-7 text-primary" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="font-display text-2xl font-bold text-ink">NOVA</h1>
+                <span className="inline-flex items-center gap-1 rounded-full border border-primary/15 bg-background px-2 py-1 text-[10px] font-medium text-muted">
+                  <CheckCircle2 className="h-3 w-3 text-success" />
+                  Assistant IA
+                </span>
               </div>
-              <h2 className="font-display text-xl font-semibold text-ink">
-                Parlons de votre activité.
-              </h2>
-              <p className="text-sm text-muted mt-2 max-w-xl leading-relaxed">
-                NOVA peut analyser vos ventes, votre stock, vos créances, vos achats
-                et vos dépenses. Posez votre question naturellement : il cherchera
-                les données utiles avant de vous répondre.
+              <p className="text-sm text-muted">
+                Analysez votre activité, posez une question et laissez NOVA chercher les chiffres utiles.
               </p>
+            </div>
+          </div>
 
-              <div className="grid sm:grid-cols-2 gap-2 mt-6 w-full">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => {
-                      setInput(suggestion);
-                      inputRef.current?.focus();
-                    }}
-                    className="text-left text-xs p-3 rounded-xl border border-border bg-background hover:bg-muted/40 transition-colors"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
+          <div className="flex shrink-0 items-center gap-2">
+            <Link href="/insights">
+              <Button variant="outline" size="sm">
+                <History className="h-4 w-4" />
+                Signaux
+              </Button>
+            </Link>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={startNewConversation}
+              disabled={sending}
+            >
+              <Plus className="h-4 w-4" />
+              Nouvelle conversation
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      <Card
+        variant="elevated"
+        className="min-h-0 flex-1 overflow-hidden border-primary/15"
+      >
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex shrink-0 items-center justify-between border-b border-border bg-background/80 px-4 py-3 backdrop-blur md:px-5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-lavender-soft">
+                <Bot className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-ink">Conversation avec NOVA</p>
+                <p className="text-[11px] text-muted">Vos données restent limitées à votre organisation.</p>
               </div>
             </div>
-          ) : (
-            <>
-              {title && (
-                <div className="text-center text-xs text-muted pb-1">
-                  {title}
-                </div>
-              )}
+            <span className="hidden text-[11px] text-muted sm:inline">
+              {messages.length > 0 ? `${messages.length} message${messages.length > 1 ? "s" : ""}` : "Prête à répondre"}
+            </span>
+          </div>
 
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={
-                    message.role === "user"
-                      ? "flex justify-end"
-                      : "flex justify-start"
-                  }
-                >
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 overflow-y-auto bg-surface/40 p-4 md:p-6"
+            aria-live="polite"
+          >
+            {loadingHistory ? (
+              <div className="flex h-full min-h-[260px] items-center justify-center text-sm text-muted">
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                Chargement de votre conversation…
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="mx-auto flex h-full min-h-[260px] max-w-3xl flex-col items-center justify-center text-center">
+                <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 ring-8 ring-primary/5">
+                  <Bot className="h-8 w-8 text-primary" />
+                </div>
+                <span className="rounded-full bg-background px-3 py-1 text-[11px] font-medium text-primary shadow-sm">
+                  Votre copilote de gestion
+                </span>
+                <h2 className="mt-3 font-display text-2xl font-semibold text-ink">
+                  Qu&apos;est-ce qui vous préoccupe aujourd&apos;hui ?
+                </h2>
+                <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">
+                  Parlez naturellement à NOVA. Elle peut analyser vos ventes, votre stock,
+                  vos créances, vos achats et vos dépenses avant de formuler une recommandation.
+                </p>
+
+                <div className="mt-6 grid w-full gap-2 sm:grid-cols-2">
+                  {SUGGESTIONS.map((suggestion) => (
+                    <button
+                      key={suggestion}
+                      type="button"
+                      onClick={() => {
+                        setInput(suggestion);
+                        inputRef.current?.focus();
+                      }}
+                      className="rounded-xl border border-border bg-background p-3 text-left text-xs text-ink shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md"
+                    >
+                      {suggestion}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto flex max-w-4xl flex-col gap-4">
+                {title && (
+                  <div className="text-center text-[11px] font-medium text-muted">
+                    {title}
+                  </div>
+                )}
+
+                {messages.map((message) => (
                   <div
+                    key={message.id}
                     className={
                       message.role === "user"
-                        ? "max-w-[85%] md:max-w-[70%] rounded-2xl rounded-br-md bg-primary text-white px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap"
-                        : "max-w-[90%] md:max-w-[78%] rounded-2xl rounded-bl-md border border-border bg-background px-4 py-3 text-sm text-ink leading-relaxed whitespace-pre-wrap"
+                        ? "flex justify-end"
+                        : "flex justify-start"
                     }
                   >
-                    {message.content}
+                    <div
+                      className={
+                        message.role === "user"
+                          ? "max-w-[88%] rounded-2xl rounded-br-md bg-primary px-4 py-3 text-sm leading-relaxed text-white shadow-sm md:max-w-[72%]"
+                          : "max-w-[92%] rounded-2xl rounded-bl-md border border-border bg-background px-4 py-3 text-sm leading-relaxed text-ink shadow-sm md:max-w-[78%]"
+                      }
+                    >
+                      <div className="whitespace-pre-wrap">{message.content}</div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
 
-              {sending && (
-                <div className="flex justify-start">
-                  <div className="rounded-2xl rounded-bl-md border border-border bg-background px-4 py-3 flex items-center gap-2 text-xs text-muted">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    NOVA analyse…
+                {sending && (
+                  <div className="flex justify-start">
+                    <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-border bg-background px-4 py-3 text-xs text-muted shadow-sm">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      NOVA analyse vos données…
+                    </div>
                   </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
+                )}
+              </div>
+            )}
+          </div>
 
-        <CardContent className="border-t border-border bg-surface">
-          {error && (
-            <div className="mb-3 p-3 rounded-xl bg-error/10 border border-error/20 text-xs text-error">
-              {error}
+          <CardContent className="shrink-0 border-t border-border bg-background p-3 md:p-4">
+            {error && (
+              <div className="mb-3 rounded-xl border border-error/20 bg-error/10 p-3 text-xs text-error">
+                {error}
+              </div>
+            )}
+
+            <form onSubmit={send} className="relative">
+              <textarea
+                ref={inputRef}
+                data-testid="nova-message-input"
+                value={input}
+                onChange={(event) => setInput(event.target.value.slice(0, 4000))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    void send();
+                  }
+                }}
+                placeholder="Écrivez votre question à NOVA…"
+                rows={2}
+                disabled={sending || loadingHistory}
+                className="min-h-[58px] w-full resize-none rounded-2xl border border-border bg-surface px-4 py-4 pr-28 text-sm text-ink outline-none transition focus:border-primary/40 focus:ring-4 focus:ring-primary/10 disabled:opacity-60"
+                aria-label="Message à NOVA"
+              />
+              <Button
+                type="submit"
+                size="md"
+                data-testid="nova-send-button"
+                disabled={sending || loadingHistory || input.trim().length === 0}
+                aria-label="Envoyer le message"
+                className="absolute bottom-2 right-2"
+              >
+                {sending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <ArrowUp className="h-4 w-4" />
+                )}
+                <span className="hidden sm:inline">Envoyer</span>
+              </Button>
+            </form>
+
+            <div className="mt-2 flex flex-col gap-1 text-[10px] text-muted sm:flex-row sm:items-center sm:justify-between">
+              <p>
+                NOVA utilise uniquement les données accessibles à votre organisation et ne déclenche pas d&apos;action métier sans validation humaine.
+              </p>
+              <p className="shrink-0">Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</p>
             </div>
-          )}
-
-          <form onSubmit={send} className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(event) => setInput(event.target.value.slice(0, 4000))}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && !event.shiftKey) {
-                  event.preventDefault();
-                  void send();
-                }
-              }}
-              placeholder="Écrivez votre question à NOVA…"
-              rows={2}
-              disabled={sending || loadingHistory}
-              className="min-h-[52px] max-h-40 flex-1 resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm text-ink outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60"
-              aria-label="Message à NOVA"
-            />
-            <Button
-              type="submit"
-              size="md"
-              disabled={sending || loadingHistory || input.trim().length === 0}
-              aria-label="Envoyer le message"
-            >
-              {sending ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <ArrowUp className="w-4 h-4" />
-              )}
-              <span className="hidden sm:inline">Envoyer</span>
-            </Button>
-          </form>
-
-          <p className="text-[11px] text-muted mt-2">
-            NOVA utilise les données de votre entreprise pour contextualiser ses réponses.
-            Les actions métier restent sous validation humaine dans cette version.
-          </p>
-        </CardContent>
+          </CardContent>
+        </div>
       </Card>
     </div>
   );
