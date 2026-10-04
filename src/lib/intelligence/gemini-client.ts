@@ -5,11 +5,8 @@
 const GEMINI_INTERACTIONS_URL =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
 
-const DEFAULT_NOVA_GEMINI_MODEL = "gemini-3.7-flash";
-export const NOVA_GEMINI_FALLBACK_MODELS = [
-  "gemini-3.6-flash",
-  "gemini-3.5-flash",
-] as const;
+const DEFAULT_NOVA_GEMINI_MODEL = "gemini-3.6-flash";
+export const NOVA_GEMINI_FALLBACK_MODELS = ["gemini-3.5-flash"] as const;
 const MAX_TRANSIENT_RETRIES = 2;
 const RETRY_DELAY_MS = [700, 1400] as const;
 
