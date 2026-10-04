@@ -146,15 +146,22 @@ function OnboardingWizard() {
       setStockQuantities(hydratedStock);
       setCustomers(state.customers.map((c) => ({ ...c, key: nextKey() })));
       const openingCount = Object.values(hydratedStock).filter((q) => q > 0).length;
-      setCurrentStep(
-        deriveStep(
-          state.organization != null,
-          hydratedProducts.length,
-          openingCount,
-          state.customers.length,
-          state.hasConfirmedSale
-        )
+      const derivedStep = deriveStep(
+        state.organization != null,
+        hydratedProducts.length,
+        openingCount,
+        state.customers.length,
+        state.hasConfirmedSale
       );
+      const requestedStep = Number(
+        new URLSearchParams(window.location.search).get("step")
+      );
+      const canHonorRequestedStep =
+        Number.isInteger(requestedStep) &&
+        requestedStep >= 1 &&
+        requestedStep <= 7 &&
+        (requestedStep === 1 || state.organization != null);
+      setCurrentStep(canHonorRequestedStep ? requestedStep : derivedStep);
       setLoading(false);
     })();
   }, []);
