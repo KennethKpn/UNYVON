@@ -7,6 +7,7 @@ import {
   addImportDocumentSchema,
   buildImportStoragePath,
   canTransitionImportDocument,
+  importFieldsSchema,
   canTransitionImportSession,
   importStoragePathSchema,
   uuidSchema,
@@ -787,6 +788,169 @@ export async function decideImportItem(input: {
   }
 
   return data as DatabaseImportItem;
+}
+
+export async function updateImportItemFields(input: {
+  id: string;
+  values: Record<string, string>;
+}): Promise<DatabaseImportItem> {
+  uuidSchema.parse(input.id);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const item = await (async () => {
+    const { data, error } = await supabase
+      .from("import_items")
+      .select("*")
+      .eq("id", input.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Erreur lecture item d'import: ${error.message}`);
+    }
+    if (!data) throw new Error("Item d'import introuvable");
+    return data as DatabaseImportItem;
+  })();
+
+  const session = await fetchSession(supabase, item.session_id);
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state !== "needs_review") {
+    throw new Error(
+      `Modification autorisée uniquement pendant la revue (session: ${session.state})`
+    );
+  }
+
+  if (item.status === "imported") {
+    throw new Error("Un item déjà importé ne peut plus être modifié");
+  }
+
+  if (!input.values || typeof input.values !== "object") {
+    throw new Error("Valeurs de modification invalides");
+  }
+
+  const values = input.values;
+  const existingFields = item.fields ?? {};
+
+  const unknownField = Object.keys(values).find(
+    (field) => !(field in existingFields)
+  );
+  if (unknownField) {
+    throw new Error(`Champ non modifiable pour cet item: ${unknownField}`);
+  }
+
+  const nextFields: Record<string, import("./types").ImportFieldProvenance> = {};
+
+  for (const [field, provenance] of Object.entries(existingFields)) {
+    const raw = Object.prototype.hasOwnProperty.call(values, field)
+      ? String(values[field] ?? "").trim()
+      : provenance.raw;
+
+    if (field === "name" && raw.length === 0) {
+      throw new Error("Le nom est obligatoire");
+    }
+
+    if (raw.length === 0) {
+      continue;
+    }
+
+    const changed = raw !== provenance.raw;
+    nextFields[field] = {
+      raw,
+      confidence: provenance.confidence,
+      ...(provenance.page !== undefined ? { page: provenance.page } : {}),
+      ...(provenance.warning || changed
+        ? {
+            warning: changed
+              ? "Modifié manuellement par l'utilisateur."
+              : provenance.warning,
+          }
+        : {}),
+      ...(changed
+        ? {}
+        : provenance.normalized !== undefined
+          ? { normalized: provenance.normalized }
+          : {}),
+    };
+  }
+
+  const parsed = importFieldsSchema(item.entity_type).safeParse(nextFields);
+  if (!parsed.success) {
+    throw new Error(
+      `Données modifiées invalides: ${parsed.error.issues
+        .map((issue) => issue.message)
+        .join("; ")}`
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("import_items")
+    .update({
+      fields: parsed.data,
+      match: null,
+      action: "create",
+      status: "pending",
+      error_message: null,
+    })
+    .eq("id", item.id)
+    .eq("session_id", session.id)
+    .eq("organization_id", session.organization_id)
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Erreur enregistrement de la modification: ${error?.message ?? "aucune ligne mise à jour"}`
+    );
+  }
+
+  return data as DatabaseImportItem;
+}
+
+export async function deleteImportItem(itemId: string): Promise<void> {
+  uuidSchema.parse(itemId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const { data: item, error: itemError } = await supabase
+    .from("import_items")
+    .select("*")
+    .eq("id", itemId)
+    .limit(1)
+    .maybeSingle();
+
+  if (itemError) {
+    throw new Error(`Erreur lecture item d'import: ${itemError.message}`);
+  }
+  if (!item) throw new Error("Item d'import introuvable");
+
+  const typedItem = item as DatabaseImportItem;
+  const session = await fetchSession(supabase, typedItem.session_id);
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state !== "needs_review") {
+    throw new Error(
+      `Suppression d'un élément autorisée uniquement pendant la revue (session: ${session.state})`
+    );
+  }
+
+  if (typedItem.status === "imported") {
+    throw new Error("Un item déjà importé ne peut plus être supprimé");
+  }
+
+  const { error } = await supabase
+    .from("import_items")
+    .delete()
+    .eq("id", typedItem.id)
+    .eq("session_id", session.id)
+    .eq("organization_id", session.organization_id);
+
+  if (error) {
+    throw new Error(`Erreur suppression item d'import: ${error.message}`);
+  }
 }
 
 export async function finalizeImportReview(
