@@ -6,6 +6,20 @@
 -- import_items.fields. Elle sert uniquement à pré-remplir l'étape 4 de
 -- l'onboarding après revue + commit.
 --
+-- Aucun stock métier n'est écrit par import_commit à partir de ce champ.
+-- L'utilisateur confirme toujours l'étape 4 via le moteur métier existant.
+-- ============================================================================
+
+begin;
+
+-- ============================================================================
+-- UNYVON — SMART DATA IMPORT PHASE 5D
+-- Onboarding bridge : extraction du stock initial sans écriture automatique.
+--
+-- stock_quantity est une donnée documentaire candidate, conservée dans
+-- import_items.fields. Elle sert uniquement à pré-remplir l'étape 4 de
+-- l'onboarding après revue + commit.
+--
 -- Contrat de sécurité :
 --   * aucune nouvelle entité SQL ;
 --   * aucun stock métier écrit par import_commit ;
@@ -16,8 +30,6 @@
 -- Cette migration remplace les fonctions 5A/5C uniquement pour étendre
 -- l'allowlist du JSON produit avec stock_quantity.
 -- ============================================================================
-
-begin;
 
 -- ============================================================================
 -- UNYVON — SMART DATA IMPORT PHASE 5A
@@ -31,8 +43,6 @@ begin;
 -- les items ; elle retourne les lignes déjà matérialisées. Si la transaction
 -- échoue, tous les inserts + changements d'état sont annulés.
 -- ============================================================================
-
-begin;
 
 create or replace function public.materialize_import_document(
   p_document_id uuid,
@@ -255,8 +265,6 @@ $$;
 revoke execute on function public.materialize_import_document(uuid, jsonb, integer) from public, anon;
 grant execute on function public.materialize_import_document(uuid, jsonb, integer) to authenticated;
 
-commit;
-
 -- ============================================================================
 -- UNYVON — SMART DATA IMPORT PHASE 5C
 -- Commit atomique : import_items -> tables métier.
@@ -270,8 +278,6 @@ commit;
 --   * aucun UUID métier ne vient de l'IA ou d'un payload non revalidé ;
 --   * toute erreur annule TOUT le commit et laisse la session READY/rejouable.
 -- ============================================================================
-
-begin;
 
 create or replace function public.import_commit(
   p_session_id uuid
