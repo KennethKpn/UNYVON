@@ -124,9 +124,7 @@ test.describe("smart import — lots multi-fichiers", () => {
     );
 
     await expect(
-      page.getByRole("alert", {
-        name: /jusqu'à 5 fichiers par lot/i,
-      })
+      page.getByRole("alert").filter({ hasText: /jusqu'à 5 fichiers par lot/i })
     ).toBeVisible();
 
     await expect(page.getByText("too-many-1.png", { exact: true })).toHaveCount(0);
