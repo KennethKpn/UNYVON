@@ -195,6 +195,7 @@ export default function ImportPage(){
   const pending=data?.items.filter(i=>i.status==="pending").length??0;
   const ready=!!data&&data.session.state==="needs_review"&&data.items.length>0&&pending===0;
   const opts=(item:DatabaseImportItem)=>data?.options[item.entity_type]??[];
+  const [reviewEdits,setReviewEdits]=useState<Record<string,Record<string,string>>>({});
   const fieldLabels:Record<string,string>={name:"Nom",unit:"Unité",cost_price:"Prix d’achat",sale_price:"Prix de vente",min_stock_threshold:"Seuil de stock",stock_quantity:"Stock",category:"Catégorie",phone:"Téléphone",email:"E-mail",address:"Adresse",notes:"Notes"};
   const beginEdit=(item:DatabaseImportItem)=>{setEditDrafts(x=>({...x,[item.id]:Object.fromEntries(Object.entries(item.fields).map(([key,value])=>[key,value.raw]))}));setError("");setNotice("");};
   const cancelEdit=(id:string)=>{setEditDrafts(x=>{const n={...x};delete n[id];return n;});};
