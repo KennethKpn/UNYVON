@@ -831,10 +831,10 @@ describe("updateImportItemFields / deleteImportItem", () => {
 
     expect(row.status).toBe("pending");
     expect(row.action).toBe("create");
-    expect((row.fields as any).name.raw).toBe("Produit A corrigé");
-    expect((row.fields as any).sale_price.normalized).toBe(12500);
-    expect((row.fields as any).stock_quantity.normalized).toBe(4);
-    expect((row.fields as any).sale_price.warning).toContain("Modifié");
+    expect((row.fields.name?.raw)).toBe("Produit A corrigé");
+    expect((row.fields.sale_price?.normalized)).toBe(12500);
+    expect((row.fields.stock_quantity?.normalized)).toBe(4);
+    expect(row.fields.sale_price?.warning).toContain("Modifié");
   });
 
   it("permet d'ajouter un champ absent de l'extraction", async () => {
@@ -855,8 +855,8 @@ describe("updateImportItemFields / deleteImportItem", () => {
       },
     });
 
-    expect((row.fields as any).sale_price.normalized).toBe(18500);
-    expect((row.fields as any).stock_quantity.normalized).toBe(8);
+    expect(row.fields.sale_price?.normalized).toBe(18500);
+    expect(row.fields.stock_quantity?.normalized).toBe(8);
   });
 
   it("refuse un nom vide", async () => {
