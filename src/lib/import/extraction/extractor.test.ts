@@ -193,10 +193,37 @@ describe("documents inutilisables", () => {
   });
 
   it("échoue sur un document illisible (données corrompues)", async () => {
-    const doc = await run("pdf", new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0xfe, 0x00, 0x11]));
+    const doc = await run("pdf", new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00, 0xff, 0xfe, 0x00, 0x11]), null);
     expect(doc.status).toBe("FAILED");
     expect(doc.errors.length).toBeGreaterThan(0);
   });
+
+  it("utilise Gemini comme fallback visuel pour un PDF sans texte local", async () => {
+    const calls: Array<{ kind: string; mimeType?: string; base64?: string }> = [];
+    const provider: Provider = {
+      name: "pdf-vision",
+      async parse(request) {
+        calls.push(request);
+        expect(request.kind).toBe("document");
+        if (request.kind === "document") {
+          expect(request.mimeType).toBe("application/pdf");
+          expect(request.base64).toBeTruthy();
+        }
+        return VALID_OUTPUT;
+      },
+    };
+
+    const unreadablePdf = new Uint8Array([
+      0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x37, 0x0a, 0x00, 0xff, 0xfe, 0x00,
+    ]);
+    const doc = await run("pdf", unreadablePdf, provider);
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.source).toBe("pdf-llm");
+    expect(doc.candidates.length).toBeGreaterThan(0);
+    expect(calls).toHaveLength(1);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
