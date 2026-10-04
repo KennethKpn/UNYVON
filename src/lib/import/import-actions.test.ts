@@ -311,6 +311,7 @@ const h = vi.hoisted(() => {
     rpcCalls,
     storageCalls,
     storageListCalls,
+    itemRow,
     ORG,
     OTHER_ORG: "99999999-9999-4999-8999-999999999999",
     SESSION,
