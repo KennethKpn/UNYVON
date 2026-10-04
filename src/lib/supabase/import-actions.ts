@@ -8,7 +8,6 @@ import {
   buildImportStoragePath,
   canTransitionImportDocument,
   importFieldsSchema,
-  IMPORT_TARGET_FIELDS,
   canTransitionImportSession,
   importStoragePathSchema,
   uuidSchema,
@@ -19,6 +18,7 @@ import type {
   DatabaseImportItem,
   ImportDocumentState,
   ImportFieldProvenance,
+  IMPORT_TARGET_FIELDS,
 } from "@/lib/import/types";
 import {
   createDefaultProvider,
