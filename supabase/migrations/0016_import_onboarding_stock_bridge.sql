@@ -179,7 +179,7 @@ begin
     end if;
 
     for v_key in
-      select k.key from pg_catalog.jsonb_object_keys(v_fields) as k(key)
+      select pg_catalog.jsonb_object_keys(v_fields)
     loop
       if (v_entity = 'category' and v_key not in ('name'))
          or (v_entity = 'product' and v_key not in ('name', 'unit', 'cost_price', 'sale_price', 'min_stock_threshold', 'stock_quantity', 'category'))
@@ -392,7 +392,7 @@ begin
     end if;
 
     for v_key in
-      select k.key from pg_catalog.jsonb_object_keys(v_fields) as k(key)
+      select pg_catalog.jsonb_object_keys(v_fields)
     loop
       v_field := v_fields->v_key;
 
