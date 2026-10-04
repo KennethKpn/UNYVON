@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";\nimport type { FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import Link from "next/link";
 import {
   ArrowUp,
