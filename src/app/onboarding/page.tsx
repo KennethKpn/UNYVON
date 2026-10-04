@@ -19,6 +19,7 @@ import {
   createOrganizationAction,
   getOnboardingImportDraftAction,
   getOnboardingStateAction,
+  saveOnboardingActivityAction,
   syncOnboardingCustomers,
   syncOnboardingProducts,
   syncOnboardingSale,
@@ -142,6 +143,7 @@ function OnboardingWizard() {
         setOrgName(state.organization.name);
         setSector(state.organization.sector);
         setCurrency(state.organization.currency);
+        setActivity(state.organization.activityDescription);
       }
 
       const hydratedProducts = state.products.map((p) => ({ ...p, key: nextKey() }));
@@ -286,6 +288,13 @@ function OnboardingWizard() {
       }
 
       if (currentStep === 2) {
+        setBusyStep(2);
+        const res = await saveOnboardingActivityAction(activity);
+        setBusyStep(0);
+        if (!res.ok) {
+          setSyncError(friendlyError(res.error));
+          return;
+        }
         setCurrentStep(3);
         return;
       }
