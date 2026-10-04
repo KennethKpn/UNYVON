@@ -522,10 +522,12 @@ export async function startImportProcessing(
   if (rows.length === 0) {
     throw new Error("Impossible de traiter une session sans document");
   }
-  if (!rows.every((row) => row.state === "uploaded")) {
-    throw new Error(
-      "Tous les documents doivent être en état 'uploaded' avant le traitement"
-    );
+
+  // Un ou plusieurs documents peuvent être déjà en échec : ils restent
+  // visibles et relançables, mais ne doivent pas empêcher le traitement des
+  // autres fichiers correctement téléversés.
+  if (!rows.some((row) => row.state === "uploaded")) {
+    throw new Error("Aucun document prêt à traiter : relancez ou ajoutez un fichier.");
   }
 
   const { data, error } = await supabase

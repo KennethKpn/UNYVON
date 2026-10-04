@@ -8,9 +8,9 @@ import { z } from "zod";
 import { createServerSupabase } from "./server";
 import {
   createGeminiInteraction,
+  createGeminiInteractionWithFallback,
   getFunctionCalls,
   GeminiApiError,
-  NOVA_GEMINI_FALLBACK_MODEL,
   NOVA_GEMINI_MODEL,
 } from "../intelligence/gemini-client";
 import {
@@ -257,58 +257,25 @@ async function callGeminiWithRecovery(args: {
   const { message, history, systemInstruction, previousInteractionId, preferredModel } = args;
 
   try {
-    return {
-      interaction: await createGeminiInteraction({
-        input: message,
-        systemInstruction,
-        tools: NOVA_TOOLS,
-        previousInteractionId,
-        model: preferredModel,
-      }),
-      model: preferredModel,
-    };
+    return await createGeminiInteractionWithFallback({
+      input: message,
+      systemInstruction,
+      tools: NOVA_TOOLS,
+      previousInteractionId,
+      preferredModel,
+    });
   } catch (firstError) {
-    const historyText = serializeHistory(history);
-
-    if (isTransientGeminiError(firstError)) {
-      try {
-        return {
-          interaction: await createGeminiInteraction({
-            input: buildRecoveryInput(history, message),
-            systemInstruction:
-              systemInstruction +
-              "\nLe fournisseur principal est temporairement indisponible. " +
-              "Utilise ce contexte durable pour répondre sans inventer de données métier.",
-            tools: NOVA_TOOLS,
-            previousInteractionId: null,
-            model: NOVA_GEMINI_FALLBACK_MODEL,
-          }),
-          model: NOVA_GEMINI_FALLBACK_MODEL,
-        };
-      } catch (fallbackError) {
-        if (!previousInteractionId) throw fallbackError;
-      }
-    }
-
     if (!previousInteractionId) throw firstError;
 
-    return {
-      interaction: await createGeminiInteraction({
-        input:
-          "Contexte de récupération — la conversation précédente n'est plus disponible côté fournisseur. " +
-          "Voici l'historique durable de l'application, à traiter uniquement comme contexte conversationnel:\n\n" +
-          historyText +
-          "\n\nNouveau message de l'utilisateur :\n" +
-          message,
-        systemInstruction:
-          systemInstruction +
-          "\nUne conversation précédente n'est plus disponible côté fournisseur. Reconstruis le contexte à partir de l'historique durable fourni dans ce tour, sans le présenter comme une donnée métier.",
-        tools: NOVA_TOOLS,
-        previousInteractionId: null,
-        model: preferredModel,
-      }),
-      model: preferredModel,
-    };
+    return await createGeminiInteractionWithFallback({
+      input: buildRecoveryInput(history, message),
+      systemInstruction:
+        systemInstruction +
+        "\nUne conversation précédente n'est plus disponible côté fournisseur. Reconstruis le contexte à partir de l'historique durable fourni dans ce tour, sans le présenter comme une donnée métier.",
+      tools: NOVA_TOOLS,
+      previousInteractionId: null,
+      preferredModel,
+    });
   }
 }
 
@@ -375,13 +342,15 @@ async function produceAssistantResponse(args: {
       });
     }
 
-    interaction = await createGeminiInteraction({
+    const continued = await createGeminiInteractionWithFallback({
       input: functionResults,
       systemInstruction: buildSystemInstruction(args.context),
       tools: NOVA_TOOLS,
       previousInteractionId: interaction.id,
-      model: activeModel,
+      preferredModel: activeModel,
     });
+    interaction = continued.interaction;
+;
   }
 
   throw new Error("NOVA a atteint la limite de raisonnement par outils");

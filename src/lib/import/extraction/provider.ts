@@ -40,8 +40,8 @@ export class ProviderHttpError extends Error {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const GEMINI_MODEL = "gemini-3.7-flash";
-const GEMINI_FALLBACK_MODELS = ["gemini-3.6-flash"] as const;
+const GEMINI_MODEL = "gemini-3.6-flash";
+const GEMINI_FALLBACK_MODELS = ["gemini-3.5-flash"] as const;
 const OPENAI_MODEL = "gpt-4o-mini";
 const MAX_TRANSIENT_RETRIES = 1;
 const RETRY_DELAY_MS = [700] as const;

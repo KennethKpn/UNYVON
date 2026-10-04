@@ -375,7 +375,7 @@ describe("résilience fournisseur Gemini", () => {
     let calls = 0;
     const spy = stubFetch((url) => {
       calls += 1;
-      expect(url).toContain("gemini-3.7-flash");
+      expect(url).toContain("gemini-3.6-flash");
       if (calls === 1) {
         return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 429 });
       }
@@ -413,14 +413,41 @@ describe("résilience fournisseur Gemini", () => {
       type: "gemini",
       apiKey: "AIzaFake",
       timeoutMs: 5000,
-      model: "gemini-3.7-flash",
+      model: "gemini-3.6-flash",
     });
     await provider!.parse({ kind: "text", text: "Catalogue" });
 
     expect(spy).toHaveBeenCalledTimes(3);
-    expect(urls[0]).toContain("gemini-3.7-flash");
-    expect(urls[1]).toContain("gemini-3.7-flash");
-    expect(urls[2]).toContain("gemini-3.6-flash");
+    expect(urls[0]).toContain("gemini-3.6-flash");
+    expect(urls[1]).toContain("gemini-3.6-flash");
+    expect(urls[2]).toContain("gemini-3.5-flash");
+  });
+
+  it("bascule sur Gemini 3.5 après saturation persistante de 3.6", async () => {
+    const urls: string[] = [];
+    const spy = stubFetch((url) => {
+      urls.push(url);
+      if (urls.length < 3) {
+        return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 429 });
+      }
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+    });
+
+    await provider!.parse({ kind: "text", text: "Catalogue" });
+
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(urls[0]).toContain("gemini-3.6-flash");
+    expect(urls[1]).toContain("gemini-3.6-flash");
+    expect(urls[2]).toContain("gemini-3.5-flash");
   });
 
   it("envoie un PDF brut à Gemini pour le fallback documentaire", async () => {

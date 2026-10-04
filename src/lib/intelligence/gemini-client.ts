@@ -5,7 +5,8 @@
 const GEMINI_INTERACTIONS_URL =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
 
-const DEFAULT_NOVA_GEMINI_MODEL = "gemini-3.7-flash";
+const DEFAULT_NOVA_GEMINI_MODEL = "gemini-3.6-flash";
+export const NOVA_GEMINI_FALLBACK_MODELS = ["gemini-3.5-flash"] as const;
 const MAX_TRANSIENT_RETRIES = 2;
 const RETRY_DELAY_MS = [700, 1400] as const;
 
@@ -13,7 +14,7 @@ export const NOVA_GEMINI_MODEL =
   process.env.NOVA_GEMINI_MODEL?.trim() || DEFAULT_NOVA_GEMINI_MODEL;
 
 export const NOVA_GEMINI_FALLBACK_MODEL =
-  process.env.NOVA_GEMINI_FALLBACK_MODEL?.trim() || "gemini-3.6-flash";
+  process.env.NOVA_GEMINI_FALLBACK_MODEL?.trim() || NOVA_GEMINI_FALLBACK_MODELS[0];
 
 export interface GeminiFunctionTool {
   type: "function";
@@ -161,6 +162,47 @@ export async function createGeminiInteraction(input: {
       max_output_tokens: 1200,
     },
   });
+}
+
+export async function createGeminiInteractionWithFallback(input: {
+  input: GeminiInput;
+  systemInstruction: string;
+  tools: GeminiFunctionTool[];
+  previousInteractionId?: string | null;
+  preferredModel?: string | null;
+}): Promise<{ interaction: GeminiInteraction; model: string }> {
+  const models = Array.from(
+    new Set([
+      input.preferredModel?.trim() || NOVA_GEMINI_MODEL,
+      NOVA_GEMINI_FALLBACK_MODEL,
+      ...NOVA_GEMINI_FALLBACK_MODELS,
+    ])
+  );
+
+  let lastError: unknown;
+  for (const model of models) {
+    try {
+      return {
+        interaction: await createGeminiInteraction({
+          input: input.input,
+          systemInstruction: input.systemInstruction,
+          tools: input.tools,
+          previousInteractionId: input.previousInteractionId,
+          model,
+        }),
+        model,
+      };
+    } catch (error) {
+      lastError = error;
+      if (!(error instanceof GeminiApiError) || !isTransientStatus(error.status)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Gemini indisponible"); 
 }
 
 export function getFunctionCalls(
