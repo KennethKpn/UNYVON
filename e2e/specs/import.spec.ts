@@ -145,7 +145,7 @@ test.describe("smart import — lots multi-fichiers", () => {
       buffer: Buffer.from("test"),
     });
 
-    await expect(page.getByRole("alert")).toContainText(/format non supporté/i);
+    await expect(page.getByRole("alert").filter({ hasText: /format non supporté/i })).toBeVisible();
 
     await page.getByRole("button", { name: "Annuler l'import" }).click();
     await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
