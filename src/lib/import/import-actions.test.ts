@@ -112,6 +112,30 @@ const h = vi.hoisted(() => {
     };
   }
 
+  function itemRow(overrides: Row = {}): Row {
+    return {
+      id: "77777777-7777-4777-8777-777777777777",
+      session_id: SESSION,
+      document_id: DOC,
+      organization_id: ORG,
+      entity_type: "product",
+      source_page: 1,
+      fields: {
+        name: { raw: "Produit A", normalized: "Produit A", confidence: "high" },
+        sale_price: { raw: "10000", normalized: 10000, confidence: "high" },
+        stock_quantity: { raw: "3", normalized: 3, confidence: "high" },
+      },
+      match: null,
+      action: "create",
+      status: "pending",
+      error_message: null,
+      created_at: "2026-09-29T00:00:00+00:00",
+      updated_at: "2026-09-29T00:00:00+00:00",
+      ...overrides,
+    };
+  }
+
+
   function builder(table: string) {
     const st = {
       op: "select" as "select" | "insert" | "update" | "delete",
@@ -287,6 +311,7 @@ const h = vi.hoisted(() => {
     rpcCalls,
     storageCalls,
     storageListCalls,
+    itemRow,
     ORG,
     OTHER_ORG: "99999999-9999-4999-8999-999999999999",
     SESSION,
@@ -309,6 +334,8 @@ import {
   getImportSessions,
   markImportDocumentUploaded,
   markImportDocumentUploadFailed,
+  updateImportItemFields,
+  deleteImportItem,
 } from "../supabase/import-actions";
 
 beforeEach(() => {
@@ -783,6 +810,96 @@ describe("getImportDocuments", () => {
   it("rejette un utilisateur non authentifié", async () => {
     h.db.user = null;
     await expect(getImportDocuments(h.SESSION)).rejects.toThrow("Non authentifié");
+  });
+});
+
+describe("updateImportItemFields / deleteImportItem", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow({ state: "needs_review" })];
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    h.db.items = [h.itemRow()];
+  });
+
+  it("modifie un prix extrait et recalcule normalized", async () => {
+    const row = await updateImportItemFields({
+      id: "77777777-7777-4777-8777-777777777777",
+      values: {
+        name: "Produit A corrigé",
+        sale_price: "12 500",
+        stock_quantity: "4",
+      },
+    });
+
+    expect(row.status).toBe("pending");
+    expect(row.action).toBe("create");
+    expect((row.fields.name?.raw)).toBe("Produit A corrigé");
+    expect((row.fields.sale_price?.normalized)).toBe(12500);
+    expect((row.fields.stock_quantity?.normalized)).toBe(4);
+    expect(row.fields.sale_price?.warning).toContain("Modifié");
+  });
+
+  it("permet d'ajouter un champ absent de l'extraction", async () => {
+    h.db.items = [
+      h.itemRow({
+        fields: {
+          name: { raw: "Produit B", confidence: "high" },
+        },
+      }),
+    ];
+
+    const row = await updateImportItemFields({
+      id: "77777777-7777-4777-8777-777777777777",
+      values: {
+        name: "Produit B",
+        sale_price: "18500",
+        stock_quantity: "8",
+      },
+    });
+
+    expect(row.fields.sale_price?.normalized).toBe(18500);
+    expect(row.fields.stock_quantity?.normalized).toBe(8);
+  });
+
+  it("refuse un nom vide", async () => {
+    await expect(
+      updateImportItemFields({
+        id: "77777777-7777-4777-8777-777777777777",
+        values: { name: "", sale_price: "10000", stock_quantity: "3" },
+      })
+    ).rejects.toThrow("Le nom est obligatoire");
+  });
+
+  it("refuse une valeur numérique invalide", async () => {
+    await expect(
+      updateImportItemFields({
+        id: "77777777-7777-4777-8777-777777777777",
+        values: { name: "Produit A", sale_price: "douze mille" },
+      })
+    ).rejects.toThrow("Valeur numérique invalide");
+  });
+
+  it("refuse une modification hors revue", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    await expect(
+      updateImportItemFields({
+        id: "77777777-7777-4777-8777-777777777777",
+        values: { name: "Produit A" },
+      })
+    ).rejects.toThrow("Modification autorisée uniquement pendant la revue");
+  });
+
+  it("supprime uniquement l'item de revue et conserve le document source", async () => {
+    await deleteImportItem("77777777-7777-4777-8777-777777777777");
+
+    expect(h.db.items).toHaveLength(0);
+    expect(h.db.documents).toHaveLength(1);
+  });
+
+  it("refuse la suppression d'un item déjà importé", async () => {
+    h.db.items = [h.itemRow({ status: "imported" })];
+    await expect(
+      deleteImportItem("77777777-7777-4777-8777-777777777777")
+    ).rejects.toThrow("Un item déjà importé ne peut plus être supprimé");
   });
 });
 
