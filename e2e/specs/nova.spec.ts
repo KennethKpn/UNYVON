@@ -13,7 +13,7 @@ test.describe("NOVA — interface conversationnelle", () => {
     await expect(page.getByRole("heading", { name: "NOVA" })).toBeVisible();
     await expect(page.getByTestId("nova-message-input")).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Envoyer" })
+      page.getByRole("button", { name: "Envoyer le message" })
     ).toBeVisible();
     await expect(
       page.getByText("Conversation avec NOVA")
