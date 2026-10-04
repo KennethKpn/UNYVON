@@ -417,6 +417,7 @@ begin
                category_id = case when v_fields ? 'category' then v_category_id else category_id end
          where id = v_existing_id
            and organization_id = v_session.organization_id;
+        end if;
       end if;
 
     elsif v_item.entity_type in ('customer', 'supplier') then
