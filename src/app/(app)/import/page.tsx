@@ -27,7 +27,6 @@ const sessionLabel: Record<DatabaseImportSession["state"],string> = {
   collecting:"Collecte", processing:"Traitement", needs_review:"Revue", ready:"Prêt",
   importing:"Importation", completed:"Terminé", failed:"Échec", cancelled:"Annulé",
 };
-const fieldLabels: Record<string,string> = { name:"Nom", unit:"Unité", cost_price:"Prix d’achat", sale_price:"Prix de vente", min_stock_threshold:"Seuil de stock", stock_quantity:"Stock", category:"Catégorie", phone:"Téléphone", email:"E-mail", address:"Adresse", notes:"Notes" };
 const docLabel: Record<DatabaseImportDocument["state"],string> = {
   uploading:"Upload", uploaded:"Prêt", parsing:"Lecture", parsed:"Lu",
   extracting:"Extraction", extracted:"Extrait", failed:"Échec",
