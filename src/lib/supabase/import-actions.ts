@@ -17,6 +17,7 @@ import type {
   DatabaseImportSession,
   DatabaseImportItem,
   ImportDocumentState,
+  ImportFieldProvenance,
 } from "@/lib/import/types";
 import {
   createDefaultProvider,
@@ -841,7 +842,7 @@ export async function updateImportItemFields(input: {
     throw new Error(`Champ non modifiable pour cet item: ${unknownField}`);
   }
 
-  const nextFields: Record<string, import("./types").ImportFieldProvenance> = {};
+  const nextFields: Record<string, ImportFieldProvenance> = {};
 
   for (const [field, provenance] of Object.entries(existingFields)) {
     const raw = Object.prototype.hasOwnProperty.call(values, field)
