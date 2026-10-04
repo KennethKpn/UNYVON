@@ -421,7 +421,9 @@ async function callProvider(
   for (const model of models) {
     try {
       const response = await fetchProvider({ ...config, model }, request);
-      return toCandidates(extractTextResponse({ ...config, model }, response));
+      return toCandidates(
+        parseModelJson(extractTextResponse({ ...config, model }, response))
+      );
     } catch (error) {
       lastError = error;
       if (
