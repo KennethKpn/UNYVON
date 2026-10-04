@@ -7,20 +7,20 @@ const state = vi.hoisted(() => {
   const ITEM = "77777777-7777-4777-8777-777777777777";
 
   return {
-  USER,
+    USER,
   ORG,
   SESSION,
   ITEM,
   user: { id: USER } as { id: string } | null,
   role: "owner" as string | null,
   session: {
-    id: state.SESSION,
-    organization_id: state.ORG,
+    id: SESSION,
+    organization_id: ORG,
     state: "needs_review",
   },
   item: {
-    id: state.ITEM,
-    session_id: state.SESSION,
+    id: ITEM,
+    session_id: SESSION,
     document_id: "33333333-3333-4333-8333-333333333333",
     organization_id: ORG,
     entity_type: "product",
@@ -104,9 +104,9 @@ beforeEach(() => {
   state.session.state = "needs_review";
   state.item = {
     id: state.ITEM,
-    session_id: SESSION,
+    session_id: state.SESSION,
     document_id: "33333333-3333-4333-8333-333333333333",
-    organization_id: ORG,
+    organization_id: state.ORG,
     entity_type: "product",
     source_page: 1,
     fields: {
@@ -138,7 +138,7 @@ describe("review item editing", () => {
 
   it("refuse une modification hors revue", async () => {
     state.session.state = "processing";
-    await expect(updateImportItemFields({ id: ITEM, values: { name: "X" } }))
+    await expect(updateImportItemFields({ id: state.ITEM, values: { name: "X" } }))
       .rejects.toThrow("Modification autorisée uniquement pendant la revue");
   });
 });
