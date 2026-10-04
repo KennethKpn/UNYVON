@@ -312,12 +312,15 @@ export async function executeNovaTool(
       const productNames = new Map((productsResult.data ?? []).map((product) => [String(product.id), { name: product.name, unit: product.unit }]));
       const customerNames = new Map((customersResult.data ?? []).map((customer: { id: string; name: string }) => [String(customer.id), customer.name]));
 
-      const byProduct = new Map<string, { quantity: number; revenue: number }>();
+      const byProduct = new Map<string, { quantity: number; revenue: number; cost: number }>();
       for (const item of itemsResult.data ?? []) {
         const key = String(item.product_id);
-        const current = byProduct.get(key) ?? { quantity: 0, revenue: 0 };
+        const current = byProduct.get(key) ?? { quantity: 0, revenue: 0, cost: 0 };
         current.quantity += Number(item.quantity);
         current.revenue += Number(item.quantity) * Number(item.unit_price);
+        if (item.unit_cost_snapshot !== null && item.unit_cost_snapshot !== undefined) {
+          current.cost += Number(item.quantity) * Number(item.unit_cost_snapshot);
+        }
         byProduct.set(key, current);
       }
 
@@ -344,6 +347,11 @@ export async function executeNovaTool(
             unit: productNames.get(id)?.unit ?? null,
             quantity: value.quantity,
             revenue: value.revenue,
+            gross_margin: value.revenue - value.cost,
+            gross_margin_percent:
+              value.revenue > 0
+                ? ((value.revenue - value.cost) / value.revenue) * 100
+                : null,
           })),
         top_customers: [...byCustomer.entries()]
           .sort((a, b) => b[1] - a[1])
@@ -698,8 +706,6 @@ export async function executeNovaTool(
           const paid = customerSales.reduce((sum, sale) => sum + (paidBySale.get(String(sale.id)) ?? 0), 0);
           return {
             customer: customer.name,
-            phone: customer.phone,
-            email: customer.email,
             active: customer.is_active,
             confirmed_sales: customerSales.length,
             billed_total: billed,
