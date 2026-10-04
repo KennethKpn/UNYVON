@@ -56,6 +56,7 @@ export default function ImportPage(){
   const [error,setError] = useState("");
   const [notice,setNotice] = useState("");
   const [drafts,setDrafts] = useState<Record<string,{action:ImportItemAction; existingId:string|null}>>({});
+  const [editDrafts,setEditDrafts] = useState<Record<string,Record<string,string>>>({});
   const [loading,setLoading] = useState(true);
 
   const load = useCallback(async(id:string)=>{
