@@ -125,9 +125,9 @@ export function SmartImportPrompt({
         <p className="text-xs text-muted mt-1">PDF, DOC/DOCX, JPG, PNG ou WEBP · 25 Mo maximum</p>
       </div>
 
-      <input ref={fileInput} className="sr-only" type="file" accept=".pdf,.doc,.docx,.md,.jpg,.jpeg,.png,.webp" multiple onChange={(event) => void upload(event.target.files)} aria-label="Importer des fichiers" />
-      <input ref={cameraInput} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => void upload(event.target.files)} aria-label="Prendre une photo" />
-      <input ref={galleryInput} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void upload(event.target.files)} aria-label="Choisir des photos" />
+      <input ref={fileInput} className="sr-only" type="file" accept=".pdf,.doc,.docx,.md,.jpg,.jpeg,.png,.webp" multiple onChange={(event) => void upload(event.target.files)} aria-hidden="true" tabIndex={-1} />
+      <input ref={cameraInput} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" onChange={(event) => void upload(event.target.files)} aria-hidden="true" tabIndex={-1} />
+      <input ref={galleryInput} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple onChange={(event) => void upload(event.target.files)} aria-hidden="true" tabIndex={-1} />
 
       {error && <p role="alert" className="text-xs text-error mt-3">{error}</p>}
       {!compact && (
