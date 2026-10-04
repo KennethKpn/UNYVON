@@ -61,7 +61,14 @@ Règles ABSOLUES:
 3. Tu expliques ce qui se passe, pourquoi, et ce qu'il faut faire.
 4. Tu reformules les données structurées en texte clair et concis.
 5. Réponds en français.
-6. Maximum 3 phrases pour l'explication, 2 phrases pour la recommandation.`;
+6. Maximum 3 phrases pour l'explication, 2 phrases pour la recommandation.
+7. Pour que l'application puisse parser ta réponse, utilise exactement les libellés suivants sur des lignes séparées:
+EXPLICATION: ...
+RECOMMANDATION: ...
+ACTIONS:
+- ...
+- ...
+Ne mets aucun autre texte avant EXPLICATION.`;
 
   const userPrompt = `Signal détecté: ${context.signal.title}
 Type: ${context.signal.type}
