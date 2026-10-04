@@ -53,7 +53,15 @@ test.describe("smart import — upload guidé", () => {
       buffer: png,
     });
 
-    await page.waitForURL(/\/import\?session=[0-9a-f-]{36}&returnTo=\/onboarding&step=\d$/);
+    await page.waitForURL((url) => {
+      const session = url.searchParams.get("session");
+      return (
+        url.pathname === "/import" &&
+        /^[0-9a-f-]{36}$/.test(session ?? "") &&
+        url.searchParams.get("returnTo") === "/onboarding" &&
+        /^[1-7]$/.test(url.searchParams.get("step") ?? "")
+      );
+    });
     await expect(page.getByText("registre-e2e.png", { exact: true })).toBeVisible();
 
     await page.getByRole("button", { name: "Annuler l'import" }).click();
