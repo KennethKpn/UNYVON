@@ -419,7 +419,7 @@ export async function executeNovaTool(
         alerts: analysis
           .filter((item) => item.risk !== "normal")
           .sort((a, b) => {
-            const rank = { rupture: 0, alerte: 1, normal: 2 };
+            const rank: Record<string, number> = { rupture: 0, alerte: 1, normal: 2 };
             return rank[a.risk] - rank[b.risk];
           })
           .slice(0, 15),
