@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertCircle, Check, FileUp, Loader2, RefreshCw, ShieldCheck, Trash2, Wand2 } from "lucide-react";
+import { AlertCircle, Check, FileUp, Loader2, Pencil, RefreshCw, ShieldCheck, Trash2, Wand2, X } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useOrg } from "@/lib/context/org-context";
 import {
   addImportDocument, cancelImportSession, commitImportSession, createImportSession,
-  decideImportItem, deleteImportDocument, finalizeImportReview, markImportDocumentUploaded,
+  decideImportItem, deleteImportDocument, deleteImportItem, finalizeImportReview, markImportDocumentUploaded,
+  updateImportItemFields,
   materializeImportDocument, matchImportSession, startImportProcessing, getImportSessions,
 } from "@/lib/supabase/import-actions";
 import { getImportReviewData, retryImportDocument, type ImportReviewData } from "@/lib/supabase/import-review-actions";
