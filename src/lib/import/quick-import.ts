@@ -31,7 +31,8 @@ export function getQuickImportSourceKind(file: File): {
 
   const mimeType = file.type.split(";")[0].trim().toLowerCase();
   const normalizedMime = mimeType || mimeForExtension(extension);
-  if (!normalizedMime || !format.mimeTypes.includes(normalizedMime)) return null;
+  const mimeTypes: readonly string[] = format.mimeTypes;
+  if (!normalizedMime || !mimeTypes.includes(normalizedMime)) return null;
 
   return {
     sourceKind: format.sourceKinds[0],
