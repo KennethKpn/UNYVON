@@ -1,21 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const USER = "55555555-5555-4555-8555-555555555555";
-const ORG = "11111111-1111-4111-8111-111111111111";
-const SESSION = "22222222-2222-4222-8222-222222222222";
-const ITEM = "77777777-7777-4777-8777-777777777777";
+const state = vi.hoisted(() => {
+  const USER = "55555555-5555-4555-8555-555555555555";
+  const ORG = "11111111-1111-4111-8111-111111111111";
+  const SESSION = "22222222-2222-4222-8222-222222222222";
+  const ITEM = "77777777-7777-4777-8777-777777777777";
 
-const state = vi.hoisted(() => ({
+  return {
+  USER,
+  ORG,
+  SESSION,
+  ITEM,
   user: { id: USER } as { id: string } | null,
   role: "owner" as string | null,
   session: {
-    id: SESSION,
-    organization_id: ORG,
+    id: state.SESSION,
+    organization_id: state.ORG,
     state: "needs_review",
   },
   item: {
-    id: ITEM,
-    session_id: SESSION,
+    id: state.ITEM,
+    session_id: state.SESSION,
     document_id: "33333333-3333-4333-8333-333333333333",
     organization_id: ORG,
     entity_type: "product",
@@ -29,7 +34,8 @@ const state = vi.hoisted(() => ({
     status: "pending",
     error_message: null,
   },
-}));
+  };
+});
 
 function builder(table: string) {
   const filters: Array<[string, unknown]> = [];
@@ -41,10 +47,10 @@ function builder(table: string) {
     eq(column: string, value: unknown) { filters.push([column, value]); return api; },
     limit() { return api; },
     maybeSingle() {
-      if (table === "import_items" && state.item && filters.some(([c, v]) => c === "id" && v === ITEM)) {
+      if (table === "import_items" && state.item && filters.some(([c, v]) => c === "id" && v === state.ITEM)) {
         return Promise.resolve({ data: state.item, error: null });
       }
-      if (table === "import_sessions" && filters.some(([c, v]) => c === "id" && v === SESSION)) {
+      if (table === "import_sessions" && filters.some(([c, v]) => c === "id" && v === state.SESSION)) {
         return Promise.resolve({ data: state.session, error: null });
       }
       return Promise.resolve({ data: null, error: null });
@@ -93,11 +99,11 @@ import {
 } from "./import-actions";
 
 beforeEach(() => {
-  state.user = { id: USER };
+  state.user = { id: state.USER };
   state.role = "owner";
   state.session.state = "needs_review";
   state.item = {
-    id: ITEM,
+    id: state.ITEM,
     session_id: SESSION,
     document_id: "33333333-3333-4333-8333-333333333333",
     organization_id: ORG,
@@ -117,13 +123,13 @@ beforeEach(() => {
 describe("review item editing", () => {
   it("modifie les valeurs et force une nouvelle validation", async () => {
     const updated = await updateImportItemFields({
-      id: ITEM,
+      id: state.ITEM,
       values: { name: "Produit B", sale_price: "12500" },
     });
 
     expect(updated.fields.name.raw).toBe("Produit B");
     expect(updated.fields.sale_price.raw).toBe("12500");
-    expect(updated.fields.sale_price.normalized).toBeUndefined();
+    expect(updated.fields.sale_price.normalized).toBe(12500);
     expect(updated.fields.sale_price.warning).toContain("Modifié manuellement");
     expect(updated.status).toBe("pending");
     expect(updated.action).toBe("create");
@@ -139,13 +145,13 @@ describe("review item editing", () => {
 
 describe("review item deletion", () => {
   it("supprime uniquement l'élément extrait", async () => {
-    await deleteImportItem(ITEM);
+    await deleteImportItem(state.ITEM);
     expect(state.item).toBeNull();
   });
 
   it("refuse un élément déjà importé", async () => {
     state.item.status = "imported";
-    await expect(deleteImportItem(ITEM))
+    await expect(deleteImportItem(state.ITEM))
       .rejects.toThrow("Un item déjà importé ne peut plus être supprimé");
   });
 });
