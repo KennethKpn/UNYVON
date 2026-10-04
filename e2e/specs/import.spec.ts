@@ -32,3 +32,31 @@ test.describe("smart import — découverte", () => {
     await expect(page.getByRole("button", { name: "Choisir des photos" })).toBeVisible();
   });
 });
+
+
+test.describe("smart import — upload guidé", () => {
+  test("uploade réellement une photo depuis l'onboarding puis nettoie la session", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "vp-390x844", "Un seul viewport suffit pour tester l'upload réel.");
+    await page.goto("/onboarding");
+
+    const prompt = page.getByRole("region", { name: "Importer vos données" });
+    await expect(prompt).toBeVisible();
+
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64"
+    );
+
+    await prompt.locator('input[type="file"]').first().setInputFiles({
+      name: "registre-e2e.png",
+      mimeType: "image/png",
+      buffer: png,
+    });
+
+    await page.waitForURL(/\/import\?session=[0-9a-f-]{36}&returnTo=\/onboarding&step=\d$/);
+    await expect(page.getByText("registre-e2e.png", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Annuler l'import" }).click();
+    await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
+  });
+});
