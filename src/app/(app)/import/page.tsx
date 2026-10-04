@@ -15,6 +15,7 @@ import {
 import { getImportReviewData, retryImportDocument, type ImportReviewData } from "@/lib/supabase/import-review-actions";
 import { uploadImportDocument } from "@/lib/import/storage-client";
 import { importFileIssue } from "@/lib/import/schemas";
+import { processImportDocumentBatch } from "@/lib/import/batch-processing";
 import { IMPORT_MAX_FILE_BYTES, IMPORT_V1_FORMATS, type ImportItemAction, type ImportSourceKind, type DatabaseImportDocument, type DatabaseImportItem, type DatabaseImportSession } from "@/lib/import/types";
 
 const actions: Array<[ImportItemAction,string]> = [
@@ -112,11 +113,27 @@ export default function ImportPage(){
     if(!data) return; setBusy("process");setError("");setNotice("");
     try{
       if(data.session.state==="collecting") await startImportProcessing(data.session.id);
-      let d=await getImportReviewData(data.session.id);
-      for(const doc of d.documents.filter(x=>x.state==="uploaded")) await materializeImportDocument(doc.id);
-      d=await getImportReviewData(data.session.id);
+      const current=await getImportReviewData(data.session.id);
+      const pendingDocuments=current.documents.filter(x=>x.state==="uploaded");
+      const batch=await processImportDocumentBatch(
+        pendingDocuments,
+        (documentId)=>materializeImportDocument(documentId)
+      );
+      const d=await getImportReviewData(data.session.id);
       if(d.session.state==="needs_review") d={...d,items:await matchImportSession(data.session.id)};
-      setData(d);setSessions(x=>x.map(s=>s.id===d.session.id?d.session:s));setNotice("Traitement terminé. Revue disponible.");
+      setData(d);setSessions(x=>x.map(s=>s.id===d.session.id?d.session:s));
+      if(batch.failed.length===0){
+        setNotice(
+          pendingDocuments.length===0
+            ? "Aucun document en attente de traitement."
+            : String(batch.succeeded.length)+" document"+(batch.succeeded.length>1?"s":"")+" traité"+(batch.succeeded.length>1?"s":"")+". Revue disponible."
+        );
+      }else{
+        setNotice(
+          String(batch.succeeded.length)+"/"+String(pendingDocuments.length)+" documents traités. "+
+          String(batch.failed.length)+" en échec : "+batch.failed.map(x=>x.name).join(", ")+". Relancez uniquement les échecs."
+        );
+      }
     }catch(e){setError(e instanceof Error?e.message:"Erreur de traitement");await refresh();}
     finally{setBusy("")}
   }
