@@ -139,6 +139,42 @@ async function runExtraction(
     return fail(extraction.error.code, extraction.error.message);
   }
   if (!extraction || extraction.pages.length === 0) {
+    if (input.sourceKind === "pdf" && provider) {
+      document.source = "pdf-llm";
+      document.warnings.push({
+        code: "PDF_VISION_FALLBACK",
+        message:
+          "Lecture locale du PDF sans texte exploitable : analyse visuelle Gemini utilisée en secours.",
+      });
+
+      let raw: unknown;
+      try {
+        raw = await provider.parse({
+          kind: "document",
+          mimeType: "application/pdf",
+          base64: Buffer.from(input.bytes).toString("base64"),
+        });
+      } catch (error) {
+        return fail("PROVIDER_ERROR", (error as Error).message);
+      }
+
+      const validated = validateLlmOutput(raw, input.documentId);
+      if (!validated.ok) {
+        document.warnings.push({
+          code: "INVALID_OUTPUT",
+          message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
+        });
+        return fail(
+          "INVALID_OUTPUT",
+          "Aucune donnée exploitable dans le PDF"
+        );
+      }
+
+      document.candidates = validated.candidates;
+      document.status = "SUCCESS";
+      return document;
+    }
+
     return fail("UNREADABLE_DOCUMENT", "Document illisible : aucun texte extrait");
   }
   document.source = extraction.source;
