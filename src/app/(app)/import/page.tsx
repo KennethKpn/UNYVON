@@ -175,8 +175,14 @@ export default function ImportPage(){
           await markImportDocumentUploaded(made.document.id);
           return file.name;
         }catch(error){
-          try{await deleteImportDocument(made.document.id);}catch{}
-          throw error;
+          const message=error instanceof Error?error.message:"Erreur upload inconnue";
+          try{
+            await markImportDocumentUploadFailed(made.document.id,message);
+          }catch{
+            // Le document reste au minimum traçable si la transition d'échec
+            // elle-même ne peut pas être enregistrée.
+          }
+          throw new Error(message);
         }
       })
     );
