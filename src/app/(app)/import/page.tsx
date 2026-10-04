@@ -196,6 +196,8 @@ export default function ImportPage(){
   const ready=!!data&&data.session.state==="needs_review"&&data.items.length>0&&pending===0;
   const opts=(item:DatabaseImportItem)=>data?.options[item.entity_type]??[];
   const [reviewEdits,setReviewEdits]=useState<Record<string,Record<string,string>>>({});
+  const beginEdit=(item:DatabaseImportItem)=>{const values:Record<string,string>={};Object.keys(item.fields).forEach(key=>{values[key]=item.fields[key].raw;});setReviewEdits(x=>({...x,[item.id]:values}));setError("");setNotice("");};
+  const cancelEdit=(id:string)=>{setReviewEdits(x=>{const next={...x};delete next[id];return next;});};
   const fieldLabels:Record<string,string>={name:"Nom",unit:"Unité",cost_price:"Prix d’achat",sale_price:"Prix de vente",min_stock_threshold:"Seuil de stock",stock_quantity:"Stock",category:"Catégorie",phone:"Téléphone",email:"E-mail",address:"Adresse",notes:"Notes"};
   const beginEdit=(item:DatabaseImportItem)=>{setEditDrafts(x=>({...x,[item.id]:Object.fromEntries(Object.entries(item.fields).map(([key,value])=>[key,value.raw]))}));setError("");setNotice("");};
   const cancelEdit=(id:string)=>{setEditDrafts(x=>{const n={...x};delete n[id];return n;});};
