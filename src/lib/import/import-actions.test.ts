@@ -154,9 +154,14 @@ const h = vi.hoisted(() => {
       if (st.op === "delete") {
         if (db.deleteError) return { data: null, error: { message: db.deleteError } };
         const tableRows = TABLES[table] ?? [];
-        const toRemove = new Set(selectedRows());
+        const removedRows = selectedRows();
+        const toRemove = new Set(removedRows);
         for (let i = tableRows.length - 1; i >= 0; i--) {
           if (toRemove.has(tableRows[i])) tableRows.splice(i, 1);
+        }
+        if (table === "import_documents") {
+          const removedIds = new Set(removedRows.map((row) => row.id));
+          db.items = db.items.filter((item) => !removedIds.has(item.document_id));
         }
         return { data: [], error: null };
       }
@@ -609,6 +614,16 @@ describe("markImportDocumentUploaded", () => {
       "Transition d'état non autorisée"
     );
     expect(h.db.documents[0].state).toBe("parsed");
+  });
+
+  it("refuse la suppression après commit définitif", async () => {
+    h.db.sessions = [h.sessionRow({ state: "completed" })];
+    h.db.documents = [h.documentRow({ state: "extracted" })];
+    await expect(deleteImportDocument(h.DOC)).rejects.toThrow(
+      "Suppression non autorisée après validation définitive de l'import"
+    );
+    expect(h.db.documents).toHaveLength(1);
+    expect(h.storageCalls).toHaveLength(0);
   });
 
   it("rejette un document introuvable", async () => {
