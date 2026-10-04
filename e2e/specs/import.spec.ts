@@ -64,6 +64,9 @@ test.describe("smart import — upload guidé", () => {
     });
     await expect(page.getByText("registre-e2e.png", { exact: true })).toBeVisible();
 
+    await page.getByRole("button", { name: "Supprimer", exact: true }).click();
+    await expect(page.getByText("registre-e2e.png", { exact: true })).toHaveCount(0);
+
     await page.getByRole("button", { name: "Annuler l'import" }).click();
     await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
   });
