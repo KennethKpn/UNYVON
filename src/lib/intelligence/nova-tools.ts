@@ -439,7 +439,7 @@ export async function executeNovaTool(
       ]);
 
       if (paymentsResult.error) throw new Error(`Impossible de lire les paiements: ${paymentsResult.error.message}`);
-      if (customersResult.error) throw new Error(`Impossible de lire les clients: ${customersResult.error.message`);
+      if (customersResult.error) throw new Error(`Impossible de lire les clients: ${customersResult.error.message}`);
 
       const paidBySale = new Map<string, number>();
       for (const payment of paymentsResult.data ?? []) {
