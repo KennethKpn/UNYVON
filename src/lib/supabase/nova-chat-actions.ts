@@ -44,6 +44,17 @@ interface NovaMessage {
   created_at: string;
 }
 
+function normalizeNovaModel(model: unknown, hasInteraction: boolean): string {
+  const value = String(model ?? "").trim();
+  // Les conversations créées avant le durcissement pouvaient rester sur 3.8
+  // sans interaction persistée après un échec. Elles reprennent désormais le
+  // modèle stable par défaut sans migration destructive.
+  if (!hasInteraction && value === "gemini-3.8-flash") {
+    return NOVA_GEMINI_MODEL;
+  }
+  return value || NOVA_GEMINI_MODEL;
+}
+
 function isTransientGeminiError(error: unknown): boolean {
   return (
     error instanceof GeminiApiError &&
@@ -192,7 +203,7 @@ async function ensureConversation(
       geminiInteractionId: data.gemini_interaction_id
         ? String(data.gemini_interaction_id)
         : null,
-      model: String(data.model || NOVA_GEMINI_MODEL),
+      model: normalizeNovaModel(data.model, Boolean(data.gemini_interaction_id)),
     };
   }
 
