@@ -308,7 +308,7 @@ import {
   getImportSession,
   getImportSessions,
   markImportDocumentUploaded,
-  markImportDocumentUploadFailed,
+  markImportDocumentUploadFailed, updateImportItemFields,
 } from "../supabase/import-actions";
 
 beforeEach(() => {
@@ -757,6 +757,76 @@ describe("deleteImportDocument", () => {
     h.db.user = null;
     await expect(deleteImportDocument(h.DOC)).rejects.toThrow("Non authentifié");
     expect(h.storageCalls).toHaveLength(0);
+  });
+});
+
+describe("updateImportItemFields / deleteImportItem", () => {
+  const ITEM = "44444444-4444-4444-8444-444444444444";
+
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow({ state: "needs_review" })];
+    h.db.items = [{
+      id: ITEM,
+      session_id: h.SESSION,
+      document_id: h.DOC,
+      organization_id: h.ORG,
+      entity_type: "product",
+      source_page: 1,
+      fields: {
+        name: { raw: "Huile", normalized: "Huile", confidence: "high" },
+        sale_price: { raw: "45000 FCFA", normalized: 45000, confidence: "high" },
+        unit: { raw: "bidon", normalized: "bidon", confidence: "high" },
+      },
+      match: { existing_id: "55555555-5555-4555-8555-555555555555", existing_name: "Huile", score: 0.9 },
+      action: "update",
+      status: "validated",
+      error_message: null,
+      created_at: "2026-09-29T00:00:00+00:00",
+      updated_at: "2026-09-29T00:00:00+00:00",
+    }];
+  });
+
+  it("modifie un item uniquement pendant la revue et réinitialise sa décision", async () => {
+    const updated = await updateImportItemFields({
+      id: ITEM,
+      fields: {
+        name: "Huile végétale 1 L",
+        sale_price: "50 000 FCFA",
+        unit: "bouteille",
+      },
+    });
+
+    expect(updated.fields.name.raw).toBe("Huile végétale 1 L");
+    expect(updated.fields.sale_price.normalized).toBe(50000);
+    expect(updated.fields.unit.raw).toBe("bouteille");
+    expect(updated.action).toBe("create");
+    expect(updated.status).toBe("pending");
+    expect(updated.match).toBeNull();
+  });
+
+  it("refuse une modification après finalisation de la revue", async () => {
+    h.db.sessions = [h.sessionRow({ state: "ready" })];
+
+    await expect(updateImportItemFields({
+      id: ITEM,
+      fields: { name: "Autre nom" },
+    })).rejects.toThrow("Modification autorisée pendant la revue uniquement");
+  });
+
+  it("supprime un item extrait sans toucher au document source", async () => {
+    await deleteImportItem(ITEM);
+
+    expect(h.db.items).toHaveLength(0);
+    expect(h.db.documents).toHaveLength(0);
+  });
+
+  it("refuse la suppression d'un item hors revue", async () => {
+    h.db.sessions = [h.sessionRow({ state: "ready" })];
+
+    await expect(deleteImportItem(ITEM)).rejects.toThrow(
+      "Suppression d'un élément autorisée pendant la revue uniquement"
+    );
+    expect(h.db.items).toHaveLength(1);
   });
 });
 
