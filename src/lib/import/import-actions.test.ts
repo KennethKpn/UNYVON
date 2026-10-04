@@ -304,6 +304,7 @@ import {
   cancelImportSession,
   createImportSession,
   deleteImportDocument,
+  deleteImportItem,
   getImportDocuments,
   getImportSession,
   getImportSessions,
