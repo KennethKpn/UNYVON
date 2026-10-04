@@ -15,3 +15,56 @@ test.describe("smart import — smoke fonctionnel", () => {
     await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
   });
 });
+
+
+test.describe("smart import — découverte", () => {
+  test("reste visible après reconnexion sur le dashboard", async ({ page }) => {
+    await page.goto("/dashboard");
+    await expect(page.getByRole("link", { name: /Gagner du temps|Importer/ })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Gagner du temps|Importer/ })).toHaveAttribute("href", "/import");
+  });
+
+  test("est proposé pendant l'onboarding", async ({ page }) => {
+    await page.goto("/onboarding");
+    await expect(page.getByRole("region", { name: "Importer vos données" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Importer un fichier" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Prendre une photo" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Choisir des photos" })).toBeVisible();
+  });
+});
+
+
+test.describe("smart import — upload guidé", () => {
+  test("uploade réellement une photo depuis l'onboarding puis nettoie la session", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "vp-390x844", "Un seul viewport suffit pour tester l'upload réel.");
+    await page.goto("/onboarding");
+
+    const prompt = page.getByRole("region", { name: "Importer vos données" });
+    await expect(prompt).toBeVisible();
+
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64"
+    );
+
+    await prompt.locator('input[type="file"]').first().setInputFiles({
+      name: "registre-e2e.png",
+      mimeType: "image/png",
+      buffer: png,
+    });
+
+    await page.waitForURL((url) => {
+      const session = url.searchParams.get("session");
+      return (
+        url.pathname === "/import" &&
+        /^[0-9a-f-]{36}$/.test(session ?? "") &&
+        url.searchParams.get("returnTo") === "/onboarding" &&
+        /^[1-7]$/.test(url.searchParams.get("step") ?? "")
+      );
+    });
+    await expect(page.getByText("registre-e2e.png", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Annuler l'import" }).click();
+    await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
+  });
+});

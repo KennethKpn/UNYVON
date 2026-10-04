@@ -134,8 +134,18 @@ export default function ImportPage(){
     catch(e){setError(e instanceof Error?e.message:"Revue impossible");}finally{setBusy("")}
   }
   async function commit(){if(!data||!window.confirm("Confirmer l'import définitif ?"))return;setBusy("commit");setError("");
-    try{const s=await commitImportSession(data.session.id);setData(x=>x?{...x,session:s}:x);setNotice("Import terminé.");}
-    catch(e){setError(e instanceof Error?e.message:"Commit impossible");await refresh();}finally{setBusy("")}
+    try{
+      const s=await commitImportSession(data.session.id);
+      setData(x=>x?{...x,session:s}:x);
+      const params=new URLSearchParams(window.location.search);
+      const returnTo=params.get("returnTo");
+      const returnStep=Number(params.get("step"));
+      if(returnTo==="/onboarding"){
+        router.push("/onboarding"+(Number.isInteger(returnStep)&&returnStep>=1&&returnStep<=7?"?step="+returnStep:""));
+        return;
+      }
+      setNotice("Import terminé.");
+    }catch(e){setError(e instanceof Error?e.message:"Commit impossible");await refresh();}finally{setBusy("")}
   }
   async function cancel(){if(!data)return;setBusy("cancel");setError("");
     try{const s=await cancelImportSession(data.session.id);setData(x=>x?{...x,session:s}:x);setNotice("Import annulé.");}
@@ -155,8 +165,24 @@ export default function ImportPage(){
 
   return <div className="max-w-7xl mx-auto space-y-6">
     <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4">
-      <div><p className="text-xs text-muted">UNYVON / Import intelligent</p><h1 className="font-display text-2xl font-bold text-ink mt-1">Import intelligent</h1><p className="text-sm text-muted mt-1 max-w-2xl">Déposez, contrôlez et validez vos données avant toute écriture métier.</p></div>
-      {!data?<Button onClick={()=>void newSession()} disabled={!!busy}><FileUp className="w-4 h-4"/>{busy==="new"?"Création…":"Nouvel import"}</Button>:<Button variant="outline" size="sm" onClick={()=>{setData(null);setLoading(false);router.replace("/import")}} disabled={!!busy}>← Imports</Button>}
+      <div>
+        <p className="text-xs text-muted">UNYVON / Import intelligent</p>
+        <h1 className="font-display text-2xl font-bold text-ink mt-1">Import intelligent</h1>
+        <p className="text-sm text-muted mt-1 max-w-2xl">Déposez, contrôlez et validez vos données avant toute écriture métier.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        {new URLSearchParams(typeof window!=="undefined"?window.location.search:"").get("returnTo")==="/onboarding" && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={()=>{const p=new URLSearchParams(window.location.search);const s=Number(p.get("step"));router.push("/onboarding"+(Number.isInteger(s)&&s>=1&&s<=7?"?step="+s:""));}}
+            disabled={!!busy}
+          >
+            ← Retour à l&apos;onboarding
+          </Button>
+        )}
+        {!data?<Button onClick={()=>void newSession()} disabled={!!busy}><FileUp className="w-4 h-4"/>{busy==="new"?"Création…":"Nouvel import"}</Button>:<Button variant="outline" size="sm" onClick={()=>{setData(null);setLoading(false);router.replace("/import")}} disabled={!!busy}>← Imports</Button>}
+      </div>
     </div>
     {(error||notice)&&<div role={error?"alert":"status"} className={error?"p-3 rounded-[10px] bg-error/10 text-error text-sm":"p-3 rounded-[10px] bg-success/10 text-success text-sm"}><span className="flex items-center gap-2"><AlertCircle className="w-4 h-4"/>{error||notice}</span></div>}
     {!data?<Card variant="elevated"><CardHeader><h2 className="font-display font-semibold text-ink">Imports récents</h2></CardHeader><CardContent>{sessions.length===0?<p className="text-sm text-muted text-center py-8">Aucun import.</p>:<div className="space-y-2">{sessions.slice(0,12).map(s=><button key={s.id} type="button" onClick={()=>open(s.id)} className="w-full flex items-center gap-3 p-3 min-h-[56px] rounded-[12px] border border-border text-left hover:bg-background"><FileUp className="w-4 h-4 text-primary"/><span className="flex-1 text-sm text-ink">#{s.id.slice(0,8)}</span><Badge variant="info">{sessionLabel[s.state]}</Badge></button>)}</div>}</CardContent></Card>:
