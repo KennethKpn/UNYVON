@@ -15,7 +15,7 @@ import {
 } from "@/lib/supabase/import-actions";
 import { getImportReviewData, retryImportDocument, type ImportReviewData } from "@/lib/supabase/import-review-actions";
 import { uploadImportDocument } from "@/lib/import/storage-client";
-import { importFileIssue } from "@/lib/import/schemas";
+import { resolveImportFileType } from "@/lib/import/file-selection";
 import { processImportDocumentBatch } from "@/lib/import/batch-processing";
 import { IMPORT_MAX_FILE_BYTES, IMPORT_V1_FORMATS, type ImportItemAction, type ImportSourceKind, type DatabaseImportDocument, type DatabaseImportItem, type DatabaseImportSession } from "@/lib/import/types";
 
@@ -32,28 +32,6 @@ const docLabel: Record<DatabaseImportDocument["state"],string> = {
   extracting:"Extraction", extracted:"Extrait", failed:"Échec",
 };
 
-function sourceKind(file: File): ImportSourceKind | null {
-  const ext = file.name.toLowerCase().split(".").pop() ?? "";
-  const format = IMPORT_V1_FORMATS.find((x) => x.extension === ext);
-  if (!format) return null;
-
-  const browserMime = file.type.split(";")[0].trim().toLowerCase();
-
-  // Certains navigateurs/systèmes renvoient un File.type vide pour une image.
-  // On accepte alors le MIME contractuel de l'extension. Lorsqu'un MIME est
-  // fourni, la cohérence extension ↔ MIME reste obligatoire.
-  if (!browserMime) return format.sourceKinds[0];
-
-  return (format.mimeTypes as readonly string[]).includes(browserMime)
-    ? format.sourceKinds[0]
-    : null;
-}
-
-function expectedMimeType(file: File): string {
-  const ext = file.name.toLowerCase().split(".").pop() ?? "";
-  const format = IMPORT_V1_FORMATS.find((x) => x.extension === ext);
-  return format?.mimeTypes[0] ?? file.type.split(";")[0].trim().toLowerCase();
-}
 function bytes(n:number){return n < 1048576 ? `${Math.round(n/1024)} Ko` : `${(n/1048576).toFixed(1)} Mo`;}
 function summary(item:DatabaseImportItem){
   return Object.entries(item.fields).map(([k,v])=>`${k}: ${v.raw}`).join(" · ");
@@ -143,22 +121,10 @@ export default function ImportPage(){
 
     const results=await Promise.allSettled(
       selected.map(async(file)=>{
-        const ext=file.name.toLowerCase().split(".").pop()??"";
-        const kind=sourceKind(file);
-        const mimeType=expectedMimeType(file);
-
-        if(!kind){
-          const browserMime=file.type.split(";")[0].trim().toLowerCase();
-          if(!IMPORT_V1_FORMATS.some(format=>format.extension===ext)){
-            throw new Error(file.name+": format non supporté (PDF, DOC, DOCX, MD, JPG, JPEG, PNG ou WEBP).");
-          }
-          throw new Error(
-            file.name+": type MIME incompatible"+(browserMime?" ("+browserMime+")":" ou inconnu")+"."
-          );
-        }
-
-        const issue=importFileIssue(file.name,mimeType,kind);
-        if(issue) throw new Error(file.name+": "+issue);
+        const resolved=resolveImportFileType(file.name,file.type);
+        if(!resolved.ok) throw new Error(resolved.error);
+        const kind=resolved.sourceKind;
+        const mimeType=resolved.mimeType;
         if(file.size===0) throw new Error(file.name+": fichier vide");
         if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
 
