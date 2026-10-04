@@ -16,12 +16,19 @@ export type UpdateOrgActionState =
   | { ok: false; error: string }
   | { ok: false; error: "UNAUTHENTICATED" | "NOT_CONFIGURED" };
 
+export type UpdateActivityActionState =
+  | { ok: true }
+  | { ok: false; error: string }
+  | { ok: false; error: "UNAUTHENTICATED" | "NOT_CONFIGURED" };
+
+
 /** Org retournée par l'onboarding (pour hydratation / reprise). */
 export interface OnboardingOrg {
   id: string;
   name: string;
   sector: string;
   currency: string;
+  activityDescription: string;
 }
 
 /** Produit saisi dans le wizard. `id` vaut l'identifiant réel une fois sync. */
@@ -290,6 +297,59 @@ export async function updateOrganizationAction(
 }
 
 /**
+ * Enregistre la description d'activité de l'étape 2.
+ * La valeur reste bornée pour éviter qu'un texte accidentellement énorme
+ * n'entre dans le profil de l'organisation.
+ */
+export async function saveOnboardingActivityAction(
+  activityDescription: string
+): Promise<UpdateActivityActionState> {
+  const activity = activityDescription.trim();
+  if (activity.length > 2000) {
+    return { ok: false, error: "La description de l'activité est trop longue." };
+  }
+
+  let supabase;
+  try {
+    supabase = await createServerSupabase();
+  } catch {
+    return { ok: false, error: "NOT_CONFIGURED" };
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) return { ok: false, error: "UNAUTHENTICATED" };
+
+  const orgId =
+    (await resolveOwnedOrg(supabase, user.id)) ??
+    (await resolveMemberOrg(supabase, user.id));
+
+  if (!orgId) return { ok: false, error: "Aucune organisation trouvée." };
+
+  const { data: role } = await supabase.rpc("current_org_role", {
+    org_id: orgId,
+  });
+
+  if (!["owner", "manager"].includes(role)) {
+    return {
+      ok: false,
+      error: "Vous n'avez pas les droits pour modifier l'organisation.",
+    };
+  }
+
+  const { error } = await supabase
+    .from("organizations")
+    .update({ activity_description: activity })
+    .eq("id", orgId);
+
+  if (error) return { ok: false, error: error.message };
+
+  return { ok: true };
+}
+
+/**
  * Retourne l'état réel de l'onboarding pour l'utilisateur connecté :
  * l'org existante (si reprise après interruption), ses produits/clients
  * déjà persistés, le stock initial déjà saisi et l'éventuelle vente confirmée.
@@ -329,7 +389,7 @@ export async function getOnboardingStateAction(): Promise<OnboardingState> {
 
   const { data: org } = await supabase
     .from("organizations")
-    .select("id, name, sector, currency")
+    .select("id, name, sector, currency, activity_description")
     .eq("id", orgId)
     .single();
 
@@ -367,7 +427,13 @@ export async function getOnboardingStateAction(): Promise<OnboardingState> {
   return {
     ok: true,
     organization: org
-      ? { id: org.id, name: org.name, sector: org.sector, currency: org.currency }
+      ? {
+          id: org.id,
+          name: org.name,
+          sector: org.sector,
+          currency: org.currency,
+          activityDescription: org.activity_description ?? "",
+        }
       : null,
     products: (products ?? []).map((p) => ({
       id: p.id,
