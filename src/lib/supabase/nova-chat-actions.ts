@@ -204,7 +204,7 @@ async function ensureConversation(
       provider: "gemini",
       model: NOVA_GEMINI_MODEL,
     })
-    .select("id, gemini_interaction_id")
+    .select("id, gemini_interaction_id, model")
     .single();
 
   if (error || !data) {
