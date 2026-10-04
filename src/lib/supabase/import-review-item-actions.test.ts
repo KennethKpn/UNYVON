@@ -15,9 +15,9 @@ const state = vi.hoisted(() => ({
   },
   item: {
     id: "77777777-7777-4777-8777-777777777777",
-    session_id: SESSION,
+    session_id: "22222222-2222-4222-8222-222222222222",
     document_id: "33333333-3333-4333-8333-333333333333",
-    organization_id: ORG,
+    organization_id: "11111111-1111-4111-8111-111111111111",
     entity_type: "product",
     source_page: 1,
     fields: {
