@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "vitest run",
     "e2e": "playwright test",
-    "e2e:audit": "playwright test e2e/specs/audit.spec.ts e2e/specs/cta.spec.ts e2e/specs/tables.spec.ts e2e/specs/modals.spec.ts e2e/specs/onboarding.spec.ts e2e/specs/import.spec.ts",
+    "e2e:audit": "playwright test e2e/specs/audit.spec.ts e2e/specs/cta.spec.ts e2e/specs/tables.spec.ts e2e/specs/modals.spec.ts e2e/specs/onboarding.spec.ts e2e/specs/import.spec.ts e2e/specs/nova.spec.ts",
     "e2e:update": "playwright test e2e/specs/visual.spec.ts --update-snapshots",
     "e2e:serve": "next build && next start",
     "e2e:report": "playwright show-report"
@@ -32,7 +32,6 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
-    "playwright": "^1.62.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.11"
