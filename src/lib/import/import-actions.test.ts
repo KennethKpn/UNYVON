@@ -351,7 +351,10 @@ vi.mock("@/lib/import/extraction", () => ({
       artifact: {
         version: 1,
         source: "pdf-local",
-        pages: [{ page: 1, text: "Produit Test" }],
+        pages: [
+      { page: 1, text: "Produit Test" },
+      { page: 2, text: "Suite Produit Test" },
+    ],
         warnings: [],
       },
     };
