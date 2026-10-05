@@ -143,6 +143,34 @@ export function composeProviderTextChunks(
   if (current) push(current);
   return chunks.length > 0 ? chunks : [""];
 }
+function hasValidMagicSignature(sourceKind: string, bytes: Uint8Array): boolean {
+  const startsWith = (signature: number[]) =>
+    signature.every((value, index) => bytes[index] === value);
+
+  switch (sourceKind) {
+    case "pdf":
+      return new TextDecoder("latin1").decode(bytes.slice(0, 5)) === "%PDF-";
+    case "doc":
+      return startsWith([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    case "docx":
+      return startsWith([0x50, 0x4b, 0x03, 0x04]);
+    case "image": {
+      const jpeg = startsWith([0xff, 0xd8, 0xff]);
+      const png = startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const webp =
+        bytes.length >= 12 &&
+        new TextDecoder("latin1").decode(bytes.slice(0, 4)) === "RIFF" &&
+        new TextDecoder("latin1").decode(bytes.slice(8, 12)) === "WEBP";
+      return jpeg || png || webp;
+    }
+    case "md":
+      // Le Markdown/texte brut n'a pas de signature binaire fiable.
+      return true;
+    default:
+      return false;
+  }
+}
+
 function buildFailed(
   input: ExtractionInput,
   source: string,
@@ -197,6 +225,20 @@ export function parseDocumentLocally(input: ExtractionInput): LocalParseResult {
     return {
       status: "FAILED",
       errors: [{ code: "FILE_TOO_LARGE", message: "Fichier trop volumineux (25 Mo maximum)" }],
+      warnings: baseWarnings,
+      source: "none",
+      pages: [],
+    };
+  }
+
+  if (!hasValidMagicSignature(input.sourceKind, input.bytes)) {
+    return {
+      status: "FAILED",
+      errors: [{
+        code: "INVALID_FILE_SIGNATURE",
+        message:
+          "Signature binaire du fichier incompatible avec le format annoncé",
+      }],
       warnings: baseWarnings,
       source: "none",
       pages: [],
