@@ -104,85 +104,68 @@ export default function ImportPage(){
   async function filesSelected(files:FileList|null){
     if(!files||!data) return;
 
-    const selected=Array.from(files);
     setBusy("upload");setError("");setNotice("");setUploadErrors([]);
 
-    if(selected.length===0){
-      setBusy("");
-      return;
-    }
+    try{
+      const selected=Array.from(files);
+      if(selected.length===0) return;
 
-    if(selected.length>5){
-      setBusy("");
-      setError("Vous pouvez importer jusqu'à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
-      if(input.current)input.current.value="";
-      return;
-    }
+      if(selected.length>5){
+        throw new Error("Vous pouvez importer jusqu à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
+      }
 
-    const results=await Promise.allSettled(
-      selected.map(async(file)=>{
-        const resolved=resolveImportFileType(file.name,file.type);
-        if(!resolved.ok) throw new Error(resolved.error);
-        const kind=resolved.sourceKind;
-        const mimeType=resolved.mimeType;
-        if(file.size===0) throw new Error(file.name+": fichier vide");
-        if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
+      const succeeded:string[]=[];
+      const failed:string[]=[];
 
-        const made=await addImportDocument({
-          sessionId:data.session.id,
-          originalName:file.name,
-          sourceKind:kind,
-          mimeType,
-          sizeBytes:file.size
-        });
-
+      // Upload séquentiel par lot : plus prévisible pour le Storage et la
+      // transition DB, sans sacrifier le traitement des autres fichiers.
+      for(const file of selected){
         try{
-          await uploadImportDocument(file,made.storagePath);
-          await markImportDocumentUploaded(made.document.id);
-          return file.name;
-        }catch(error){
-          const message=error instanceof Error?error.message:"Erreur upload inconnue";
+          const resolved=resolveImportFileType(file.name,file.type);
+          if(!resolved.ok) throw new Error(resolved.error);
+          if(file.size===0) throw new Error(file.name+": fichier vide");
+          if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
+
+          const made=await addImportDocument({
+            sessionId:data.session.id,
+            originalName:file.name,
+            sourceKind:resolved.sourceKind,
+            mimeType:resolved.mimeType,
+            sizeBytes:file.size
+          });
+
           try{
-            await markImportDocumentUploadFailed(made.document.id,message);
-          }catch{
-            // Le document reste au minimum traçable si la transition d'échec
-            // elle-même ne peut pas être enregistrée.
+            await uploadImportDocument(file,made.storagePath);
+            await markImportDocumentUploaded(made.document.id);
+            succeeded.push(file.name);
+          }catch(error){
+            const message=error instanceof Error?error.message:"Erreur upload inconnue";
+            try{await markImportDocumentUploadFailed(made.document.id,message);}catch{}
+            failed.push(file.name+": "+message);
           }
-          throw new Error(message);
+        }catch(error){
+          failed.push(error instanceof Error?error.message:file.name+": erreur upload inconnue");
         }
-      })
-    );
+      }
 
-    const succeeded=results.flatMap(result=>result.status==="fulfilled"?[result.value]:[]);
-    const failed=results.flatMap(result=>
-      result.status==="rejected"
-        ? [result.reason instanceof Error?result.reason.message:"Erreur upload inconnue"]
-        : []
-    );
+      await refresh();
 
-    await refresh();
-
-    if(failed.length===0){
-      setNotice(
-        succeeded.length+" fichier"+(succeeded.length>1?"s":"")+
-        " ajouté"+(succeeded.length>1?"s":"")+". Vous pouvez traiter ce lot lorsque tous les fichiers sont en état « Prêt »."
-      );
-      setError("");
-    }else{
-      setUploadErrors(failed);
-      setError(
-        failed.length+" fichier"+(failed.length>1?"s":"")+
-        " n"+(failed.length>1?"'ont":"'a")+" pas pu être ajouté"+(failed.length>1?"s":"")+". Aucun échec n'a été masqué."
-      );
-      setNotice(
-        succeeded.length
-          ? succeeded.length+"/"+selected.length+" fichiers ajoutés."
-          : "Aucun fichier n'a été ajouté. Vérifiez les erreurs ci-dessous."
-      );
+      if(failed.length===0){
+        setNotice(succeeded.length+" fichier"+(succeeded.length>1?"s":"")+" ajouté"+(succeeded.length>1?"s":"")+". Vous pouvez maintenant traiter ce lot.");
+        setError("");
+      }else{
+        setUploadErrors(failed);
+        setError(failed.length+" fichier"+(failed.length>1?"s":"")+" n ont pas pu être ajouté"+(failed.length>1?"s":"")+". Aucun échec n est masqué.");
+        setNotice(succeeded.length?succeeded.length+"/"+selected.length+" fichiers ajoutés.":"Aucun fichier n a été ajouté. Vérifiez les erreurs ci-dessous.");
+      }
+    }catch(error){
+      const message=error instanceof Error?error.message:"Erreur upload inconnue";
+      setError(message);
+      try{await refresh();}catch{}
+    }finally{
+      setBusy("");
+      if(input.current)input.current.value="";
     }
-
-    setBusy("");
-    if(input.current)input.current.value="";
   }
   async function process(){
     if(!data) return; setBusy("process");setError("");setNotice("");
