@@ -234,11 +234,11 @@ function decodeTextOperators(content: string, fonts: FontMap): string {
     const token = direct[1];
     const font = currentFontBefore(content, direct.index);
 
-    if (token.startsWith("(")) {
-      fragments.push(decodePdfString(token.slice(1, -1)));
-    } else {
-      fragments.push(decodeHexString(token.slice(1, -1), fonts, font));
-    }
+    fragments.push(
+      token.startsWith("(")
+        ? decodePdfString(token.slice(1, -1))
+        : decodeHexString(token.slice(1, -1), fonts, font)
+    );
   }
 
   const arrayRe = /\[([\s\S]*?)\]\s*TJ/g;
@@ -248,16 +248,16 @@ function decodeTextOperators(content: string, fonts: FontMap): string {
     const inner = array[1];
     const tokenRe = /\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>/g;
     let token: RegExpExecArray | null;
+    let operatorText = "";
 
     while ((token = tokenRe.exec(inner)) !== null) {
       const rawToken = token[0];
-
-      if (rawToken.startsWith("(")) {
-        fragments.push(decodePdfString(rawToken.slice(1, -1)));
-      } else {
-        fragments.push(decodeHexString(rawToken.slice(1, -1), fonts, font));
-      }
+      operatorText += rawToken.startsWith("(")
+        ? decodePdfString(rawToken.slice(1, -1))
+        : decodeHexString(rawToken.slice(1, -1), fonts, font);
     }
+
+    if (operatorText) fragments.push(operatorText);
   }
 
   return fragments.join(" ");
