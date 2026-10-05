@@ -12,6 +12,87 @@ export interface ImportCandidateForMatching {
   fields: Record<string, { raw: string; normalized?: string | number | null }>;
 }
 
+export interface ImportItemForDedup {
+  id: string;
+  entityType: ImportEntityType;
+  fields: Record<string, { raw: string; normalized?: string | number | null }>;
+  createdAt?: string | null;
+}
+
+function canonicalDedupScalar(
+  field: string,
+  value: { raw: string; normalized?: string | number | null }
+): string {
+  const normalized = value.normalized ?? value.raw;
+
+  if (typeof normalized === "number") {
+    return `n:${normalized}`;
+  }
+
+  const text = String(normalized)
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (field === "phone") {
+    return `p:${text.replace(/\D/g, "")}`;
+  }
+
+  if (field === "email") {
+    return `e:${text}`;
+  }
+
+  return `s:${text}`;
+}
+
+export function exactImportDedupFingerprint(
+  entityType: ImportEntityType,
+  fields: Record<string, { raw: string; normalized?: string | number | null }>
+): string {
+  return JSON.stringify([
+    entityType,
+    Object.keys(fields)
+      .sort()
+      .map((field) => [field, canonicalDedupScalar(field, fields[field]!)]),
+  ]);
+}
+
+export interface ExactImportDuplicateGroup {
+  keepId: string;
+  duplicateIds: string[];
+  fingerprint: string;
+}
+
+export function findExactImportDuplicateGroups(
+  items: ImportItemForDedup[]
+): ExactImportDuplicateGroup[] {
+  const grouped = new Map<string, ImportItemForDedup[]>();
+
+  for (const item of items) {
+    const fingerprint = exactImportDedupFingerprint(item.entityType, item.fields);
+    const group = grouped.get(fingerprint) ?? [];
+    group.push(item);
+    grouped.set(fingerprint, group);
+  }
+
+  return [...grouped.entries()]
+    .map(([fingerprint, group]) => {
+      const ordered = [...group].sort((a, b) =>
+        String(a.createdAt ?? "").localeCompare(String(b.createdAt ?? "")) ||
+        a.id.localeCompare(b.id)
+      );
+      return {
+        keepId: ordered[0]!.id,
+        duplicateIds: ordered.slice(1).map((item) => item.id),
+        fingerprint,
+      };
+    })
+    .filter((group) => group.duplicateIds.length > 0);
+}
+
+
 function normalizedText(value: unknown): string {
   return String(value ?? "")
     .normalize("NFKD")
