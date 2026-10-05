@@ -548,7 +548,7 @@ export async function startImportProcessing(
   );
 }
 
-function extractionDiagnostics(extracted: ExtractedDocument): string {
+export function extractionDiagnostics(extracted: ExtractedDocument): string {
   const pages = extracted.pages.length;
   const characters = extracted.pages.reduce((total, page) => total + page.text.length, 0);
 
