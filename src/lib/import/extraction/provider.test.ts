@@ -423,11 +423,11 @@ describe("résilience fournisseur Gemini", () => {
     expect(urls[2]).toContain("gemini-3.7-flash");
   });
 
-  it("bascule sur Gemini 3.5 après saturation persistante de 3.6", async () => {
+  it("bascule sur Gemini 3.5 si 3.6 et 3.7 restent saturés", async () => {
     const urls: string[] = [];
     const spy = stubFetch((url) => {
       urls.push(url);
-      if (urls.length < 3) {
+      if (urls.length < 5) {
         return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 429 });
       }
       return new Response(
@@ -435,6 +435,22 @@ describe("résilience fournisseur Gemini", () => {
         { status: 200, headers: { "Content-Type": "application/json" } }
       );
     });
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+    });
+
+    await provider!.parse({ kind: "text", text: "Catalogue" });
+
+    expect(spy).toHaveBeenCalledTimes(5);
+    expect(urls[0]).toContain("gemini-3.6-flash");
+    expect(urls[1]).toContain("gemini-3.6-flash");
+    expect(urls[2]).toContain("gemini-3.7-flash");
+    expect(urls[3]).toContain("gemini-3.7-flash");
+    expect(urls[4]).toContain("gemini-3.5-flash");
+  });
 
     const provider = createProviderFromConfig({
       type: "gemini",
