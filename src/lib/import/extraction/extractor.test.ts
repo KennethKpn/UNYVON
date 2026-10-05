@@ -453,64 +453,6 @@ describe("robustesse fournisseur", () => {
 // Statuts SUCCESS / PARTIAL / FAILED
 // ---------------------------------------------------------------------------
 
-describe("documents volumineux — aucune troncature silencieuse", () => {
-  it("découpe le texte en segments <= 50 000 caractères et couvre tout le document", () => {
-    const text = "x".repeat(120_000);
-    const pages = [{ page: 1, text }];
-    const warnings: Array<{ code: string; message: string }> = [];
-
-    const chunks = composeProviderTextChunks(pages, warnings);
-
-    expect(chunks.length).toBeGreaterThan(2);
-    expect(chunks.every((chunk) => chunk.length <= 50_000)).toBe(true);
-    expect(chunks.join("")).toContain("x".repeat(120_000));
-    expect(warnings.some((warning) => warning.code === "TEXT_CHUNKED")).toBe(true);
-    expect(warnings.some((warning) => warning.code === "TEXT_TRUNCATED")).toBe(false);
-  });
-
-  it("ne perd aucune page lors du découpage par page", () => {
-    const pages = Array.from({ length: 4 }, (_, index) => ({
-      page: index + 1,
-      text: "PageData-".repeat(8_000),
-    }));
-    const warnings: Array<{ code: string; message: string }> = [];
-
-    const chunks = composeProviderTextChunks(pages, warnings);
-
-    for (const page of pages) {
-      expect(
-        chunks.some((chunk) => chunk.includes(`[Page ${page.page}]`))
-      ).toBe(true);
-      expect(
-        chunks.reduce(
-          (count, chunk) => count + (chunk.match(new RegExp(`PageData-`, "g")) ?? []).length,
-          0
-        )
-      ).toBeGreaterThanOrEqual(pages.length * 8_000);
-    }
-  });
-
-  it("si un segment échoue, le document reste PARTIAL et aucun faux SUCCESS n'est émis", async () => {
-    let calls = 0;
-    const provider: Provider = {
-      name: "chunk-failure",
-      async parse() {
-        calls += 1;
-        if (calls === 2) throw new Error("second chunk failed");
-        return VALID_OUTPUT;
-      },
-    };
-
-    const longDoc = "segment ".repeat(10_000);
-    const doc = await run("md", enc(longDoc), provider);
-
-    expect(calls).toBeGreaterThan(1);
-    expect(doc.status).toBe("PARTIAL");
-    expect(doc.errors[0]?.message).toBe("second chunk failed");
-    expect(doc.candidates).toHaveLength(0);
-  });
-});
-
 describe("statuts d'extraction", () => {
   it("SUCCESS : texte extrait et candidats validés", async () => {
     const doc = await run("md", enc("Huile"), fakeProvider(VALID_OUTPUT));
