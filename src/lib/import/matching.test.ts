@@ -109,6 +109,50 @@ describe("proposeImportItemMatch", () => {
     ).toBeNull();
   });
 
+  it("ne déduplique pas deux clients portant seulement le même nom", () => {
+    expect(
+      findExactImportDuplicateGroups([
+        {
+          id: "c1",
+          entityType: "customer",
+          createdAt: "2026-10-05T00:00:00Z",
+          fields: { name: { raw: "Jean Dupont", normalized: "Jean Dupont" } },
+        },
+        {
+          id: "c2",
+          entityType: "customer",
+          createdAt: "2026-10-05T00:00:01Z",
+          fields: { name: { raw: "Jean Dupont", normalized: "Jean Dupont" } },
+        },
+      ])
+    ).toEqual([]);
+  });
+
+  it("déduplique un client exact seulement avec un contact fort", () => {
+    expect(
+      findExactImportDuplicateGroups([
+        {
+          id: "c1",
+          entityType: "customer",
+          createdAt: "2026-10-05T00:00:00Z",
+          fields: {
+            name: { raw: "Jean Dupont", normalized: "Jean Dupont" },
+            phone: { raw: "+229 97 00 00 00", normalized: "+229 97000000" },
+          },
+        },
+        {
+          id: "c2",
+          entityType: "customer",
+          createdAt: "2026-10-05T00:00:01Z",
+          fields: {
+            name: { raw: "Jean Dupont", normalized: "Jean Dupont" },
+            phone: { raw: "+22997000000", normalized: "+22997000000" },
+          },
+        },
+      ])
+    ).toHaveLength(1);
+  });
+
   it("regroupe uniquement les doublons exacts de contenu", () => {
     const groups = findExactImportDuplicateGroups([
       {
