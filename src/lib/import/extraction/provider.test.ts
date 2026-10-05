@@ -420,7 +420,7 @@ describe("résilience fournisseur Gemini", () => {
     expect(spy).toHaveBeenCalledTimes(3);
     expect(urls[0]).toContain("gemini-3.6-flash");
     expect(urls[1]).toContain("gemini-3.6-flash");
-    expect(urls[2]).toContain("gemini-3.5-flash");
+    expect(urls[2]).toContain("gemini-3.7-flash");
   });
 
   it("bascule sur Gemini 3.5 après saturation persistante de 3.6", async () => {
