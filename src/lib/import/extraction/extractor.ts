@@ -5,7 +5,11 @@ import {
   type ImportParsedArtifact,
 } from "../types";
 import { extractTextContent } from "./adapters";
-import { validateLlmOutput, verifyProvenanceAgainstPages } from "./output-schema";
+import {
+  markVisionProvenanceUnverified,
+  validateLlmOutput,
+  verifyProvenanceAgainstPages,
+} from "./output-schema";
 import type { Provider } from "./provider";
 import type {
   ExtractedDocument,
@@ -419,7 +423,14 @@ export async function structureParsedDocument(
     document.candidates =
       artifact.pages.length > 0
         ? verifyProvenanceAgainstPages(validated.candidates, artifact.pages)
-        : validated.candidates;
+        : markVisionProvenanceUnverified(validated.candidates);
+    if (artifact.pages.length === 0) {
+      document.warnings.push({
+        code: "VISION_PROVENANCE_UNVERIFIED",
+        message:
+          "Analyse visuelle réussie mais aucune transcription locale ne permet de corroborer les citations : vérification humaine requise avant import.",
+      });
+    }
     document.status = "SUCCESS";
     return document;
   }
