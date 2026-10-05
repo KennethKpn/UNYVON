@@ -79,17 +79,70 @@ function composeProviderText(
   pages: ExtractedDocument["pages"],
   warnings: ExtractionWarning[]
 ): string {
-  const full = pages
-    .map((page) => `[Page ${page.page}]\n${escapeForgedPageMarkers(page.text)}`)
-    .join("\n\n");
-  if (full.length <= MAX_PROVIDER_TEXT_CHARS) return full;
-  warnings.push({
-    code: "TEXT_TRUNCATED",
-    message: `Texte tronqué à ${MAX_PROVIDER_TEXT_CHARS} caractères pour le fournisseur IA`,
-  });
-  return full.slice(0, MAX_PROVIDER_TEXT_CHARS);
+  const chunks = composeProviderTextChunks(pages, warnings);
+  return chunks[0] ?? "";
 }
 
+export function composeProviderTextChunks(
+  pages: ExtractedDocument["pages"],
+  warnings: ExtractionWarning[]
+): string[] {
+  const pageBlocks = pages.map(
+    (page) => `[Page ${page.page}]\n${escapeForgedPageMarkers(page.text)}`
+  );
+  const chunks: string[] = [];
+  let current = "";
+
+  const push = (value: string) => {
+    if (!value) return;
+    chunks.push(value);
+  };
+
+  for (const block of pageBlocks) {
+    if (block.length > MAX_PROVIDER_TEXT_CHARS) {
+      if (current) {
+        push(current);
+        current = "";
+      }
+
+      warnings.push({
+        code: "TEXT_CHUNKED",
+        message:
+          "Document volumineux : la structuration IA est découpée en plusieurs segments afin de ne perdre aucune page.",
+      });
+
+      const prefixMatch = block.match(/^\[Page \d+\]\n/);
+      const prefix = prefixMatch?.[0] ?? "";
+      const body = block.slice(prefix.length);
+
+      for (let offset = 0; offset < body.length; offset += MAX_PROVIDER_TEXT_CHARS - prefix.length) {
+        push(prefix + body.slice(offset, offset + MAX_PROVIDER_TEXT_CHARS - prefix.length));
+      }
+      continue;
+    }
+
+    if (!current) {
+      current = block;
+      continue;
+    }
+
+    const candidate = `${current}\n\n${block}`;
+    if (candidate.length <= MAX_PROVIDER_TEXT_CHARS) {
+      current = candidate;
+    } else {
+      push(current);
+      current = block;
+      warnings.push({
+        code: "TEXT_CHUNKED",
+        message:
+          "Document volumineux : la structuration IA est découpée en plusieurs segments afin de ne perdre aucune page.",
+      });
+    }
+  }
+
+  if (current) push(current);
+  return chunks.length > 0 ? chunks : [""];
+}
 function buildFailed(
   input: ExtractionInput,
   source: string,
@@ -333,31 +386,40 @@ export async function structureParsedDocument(
     return fail("UNREADABLE_DOCUMENT", "Document illisible : aucun texte extrait");
   }
 
-  const providerText = composeProviderText(document.pages, document.warnings);
-  let raw: unknown;
-  try {
-    raw = await provider.parse({ kind: "text", text: providerText });
-  } catch (error) {
-    document.errors.push({
-      code: "PROVIDER_ERROR",
-      message: (error as Error).message,
-    });
-    document.status = "PARTIAL";
-    return document;
-  }
+  const providerTexts = composeProviderTextChunks(
+    document.pages,
+    document.warnings
+  );
 
-  const validated = validateLlmOutput(raw, input.documentId);
-  if (!validated.ok) {
-    document.warnings.push({
-      code: "INVALID_OUTPUT",
-      message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
-    });
-    document.status = "PARTIAL";
-    return document;
+  const candidates = [];
+  for (const providerText of providerTexts) {
+    let raw: unknown;
+    try {
+      raw = await provider.parse({ kind: "text", text: providerText });
+    } catch (error) {
+      document.errors.push({
+        code: "PROVIDER_ERROR",
+        message: (error as Error).message,
+      });
+      document.status = "PARTIAL";
+      return document;
+    }
+
+    const validated = validateLlmOutput(raw, input.documentId);
+    if (!validated.ok) {
+      document.warnings.push({
+        code: "INVALID_OUTPUT",
+        message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
+      });
+      document.status = "PARTIAL";
+      return document;
+    }
+
+    candidates.push(...validated.candidates);
   }
 
   document.candidates = verifyProvenanceAgainstPages(
-    validated.candidates,
+    candidates,
     document.pages
   );
   document.status = "SUCCESS";
