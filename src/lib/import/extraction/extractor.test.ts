@@ -2,6 +2,7 @@ import { deflateRawSync, deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { MAX_DECOMPRESSED_BYTES } from "./decompression";
 import {
+  composeProviderTextChunks,
   createDocumentExtractor,
   parseDocumentLocally,
   parsePersistedArtifact,
@@ -433,11 +434,40 @@ describe("robustesse fournisseur", () => {
     expect(doc.warnings.length + doc.errors.length).toBeGreaterThan(0);
   });
 
-  it("texte très long : tronqué pour le fournisseur avec warning (limite raisonnable)", async () => {
-    const longDoc = "mot ".repeat(30000);
-    const doc = await run("md", enc(longDoc), fakeProvider(VALID_OUTPUT));
+  it("texte > 50k : est découpé en plusieurs chunks sans perdre la fin", async () => {
+    const calls: string[] = [];
+    const provider: Provider = {
+      name: "chunk-spy",
+      async parse(request) {
+        if (request.kind !== "text") throw new Error("unexpected request");
+        calls.push(request.text);
+        return { candidates: [] };
+      },
+    };
+
+    const page1 = "A".repeat(49_000);
+    const page2 = "B".repeat(8_000);
+    const doc = await run(
+      "md",
+      enc(page1 + "\n" + page2),
+      provider
+    );
+
     expect(doc.status).toBe("SUCCESS");
-    expect(doc.warnings.some((w) => w.code === "TEXT_TRUNCATED")).toBe(true);
+    expect(calls.length).toBe(2);
+    expect(calls[0]).toContain("[Page 1]");
+    expect(calls[1]).toContain("[Page 1]");
+    expect(calls[1]).toContain("B".repeat(8_000));
+    expect(doc.warnings.some((w) => w.code === "TEXT_TRUNCATED")).toBe(false);
+  });
+
+  it("refuse explicitement un document texte trop volumineux pour la borne de coût", () => {
+    const pages = [{ page: 1, text: "X".repeat(2_500_000) }];
+    const warnings: Array<{ code: string; message: string }> = [];
+    const chunks = composeProviderTextChunks(pages, warnings);
+
+    expect(chunks).toHaveLength(0);
+    expect(warnings.some((w) => w.code === "TEXT_TOO_LARGE_FOR_PROVIDER")).toBe(true);
   });
 
   it("fichier > 25 Mo refusé avant toute extraction", async () => {
