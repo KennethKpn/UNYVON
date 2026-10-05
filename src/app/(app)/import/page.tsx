@@ -108,7 +108,7 @@ export default function ImportPage(){
       const selected=Array.from(files);
       if(selected.length===0) return;
       if(selected.length>5){
-        throw new Error("Vous pouvez importer jusqu à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
+        throw new Error("Vous pouvez importer jusqu\u0027à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
       }
       const succeeded:string[]=[];
       const failed:string[]=[];
