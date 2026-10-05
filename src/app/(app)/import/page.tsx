@@ -93,12 +93,12 @@ export default function ImportPage(){
     return()=>{dead=true};
   },[load]);
 
-  const open=(id:string)=>{router.replace(`/import?session=${encodeURIComponent(id)}`);void load(id);};
+  const open=(id:string)=>{setUploadQueue([]);router.replace(`/import?session=${encodeURIComponent(id)}`);void load(id);};
   const refresh=async()=>{if(data) await load(data.session.id);};
 
   async function newSession(){
     setBusy("new");setError("");setNotice("");
-    try{const s=await createImportSession();setSessions(x=>[s,...x]);setData({session:s,documents:[],items:[],options:{category:[],product:[],customer:[],supplier:[]}});setDrafts({});router.replace(`/import?session=${s.id}`);}
+    try{const s=await createImportSession();setSessions(x=>[s,...x]);setData({session:s,documents:[],items:[],options:{category:[],product:[],customer:[],supplier:[]}});setDrafts({});setEditDrafts({});setUploadQueue([]);router.replace(`/import?session=${s.id}`);}
     catch(e){setError(e instanceof Error?e.message:"Création impossible");}finally{setBusy("")}
   }
 
