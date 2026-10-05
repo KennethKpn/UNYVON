@@ -323,7 +323,7 @@ beforeEach(() => {
 
 describe("extractionDiagnostics", () => {
   it("confirme une lecture locale même lorsque la structuration IA échoue", () => {
-    const message = extractionDiagnostics({
+    const message = await extractionDiagnostics({
       status: "PARTIAL",
       documentId: h.DOC,
       sourceKind: "pdf",
@@ -343,7 +343,7 @@ describe("extractionDiagnostics", () => {
   });
 
   it("distingue un PDF sans texte local ayant basculé vers le fallback visuel", () => {
-    const message = extractionDiagnostics({
+    const message = await extractionDiagnostics({
       status: "FAILED",
       documentId: h.DOC,
       sourceKind: "pdf",
