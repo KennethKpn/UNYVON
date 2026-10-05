@@ -19,10 +19,13 @@ import {
   type DatabaseImportItem,
   type ImportDocumentState,
   type ImportFieldProvenance,
+  type ImportParsedArtifact,
 } from "@/lib/import/types";
 import {
   createDefaultProvider,
-  createDocumentExtractor,
+  parseDocumentLocally,
+  parsePersistedArtifact,
+  structureParsedDocument,
   type ExtractedDocument,
 } from "@/lib/import/extraction";
 import type { z } from "zod";
@@ -425,50 +428,6 @@ export async function getImportDocuments(
 }
 
 // ---------------------------------------------------------------------------
-// Extraction (Phase 4) — Storage → lecture → extraction → structure validée.
-// L'orchestration persiste les états de travail :
-//   uploaded → parsing → extracted
-//   parsed   → extracting → extracted
-// Une panne IA après lecture locale revient à parsed, afin que le travail de
-// lecture ne soit pas présenté comme définitivement perdu. Les claims sont
-// atomiques : un second appel concurrent ne peut pas lancer un second fournisseur.
-//
-// Précondition d'état : 'uploaded' EXACTEMENT. L'extraction ne doit jamais
-// transformer un document en cours d'upload ('uploading') ni un document
-// terminal ('failed', 'extracted'…) : le seul état dont on sait que l'objet
-// existe et que son contenu est figé est 'uploaded'. Ce contrôle est placé
-// AVANT le téléchargement et avant toute instanciation de provider : aucun
-// octet n'est lu et aucun appel IA n'est émis pour un document non éligible
-// (pas de coût, pas de surface d'injection).
-async function performImportDocumentExtraction(
-  supabase: ServerSupabase,
-  document: DatabaseImportDocument
-): Promise<ExtractedDocument> {
-  const { data: blob, error } = await supabase.storage
-    .from("imports")
-    .download(document.storage_path);
-  if (error || !blob) {
-    throw new Error(
-      `Erreur téléchargement document: ${error?.message ?? "objet introuvable"}`
-    );
-  }
-  const bytes = new Uint8Array(await blob.arrayBuffer());
-
-  const extractor = createDocumentExtractor({
-    provider: createDefaultProvider(),
-  });
-  return extractor.extract({
-    documentId: document.id,
-    sourceKind: document.source_kind,
-    filename: document.original_name,
-    bytes,
-  });
-}
-
-// Phase 5A : extraction validée -> import_items.
-// La DB reste l'autorité de rattachement org/session/document.
-// La finalisation SQL est idempotente : un second appel après extracted
-// retourne les lignes existantes au lieu de les recréer.
 export async function extractImportDocument(
   documentId: string
 ): Promise<ExtractedDocument> {
@@ -487,12 +446,41 @@ export async function extractImportDocument(
     );
   }
 
-  return performImportDocumentExtraction(supabase, document);
+  const bytes = await downloadImportDocumentBytes(supabase, document);
+  const local = parseDocumentLocally({
+    documentId: document.id,
+    sourceKind: document.source_kind,
+    filename: document.original_name,
+    bytes,
+  });
+
+  if (local.status === "FAILED") {
+    return {
+      status: "FAILED",
+      documentId: document.id,
+      sourceKind: document.source_kind,
+      source: local.source,
+      pages: local.pages,
+      candidates: [],
+      warnings: local.warnings,
+      errors: local.errors,
+    };
+  }
+
+  return structureParsedDocument(
+    {
+      documentId: document.id,
+      sourceKind: document.source_kind,
+      filename: document.original_name,
+      bytes,
+    },
+    local.artifact,
+    createDefaultProvider()
+  );
 }
 
-// Démarre le traitement d'une session uniquement lorsque tous les documents
-// présents sont réellement uploaded. Le double clic est idempotent : processing
-// est simplement renvoyé.
+// Démarre le traitement d'une session : au moins un document uploaded ou parsed
+// doit être prêt. Une session déjà processing reste idempotemment processing.
 export async function startImportProcessing(
   sessionId: string
 ): Promise<DatabaseImportSession> {
@@ -528,12 +516,7 @@ export async function startImportProcessing(
     throw new Error("Impossible de traiter une session sans document");
   }
 
-  // Un ou plusieurs documents peuvent être déjà en échec : ils restent
-  // visibles et relançables, mais ne doivent pas empêcher le traitement des
-  // autres fichiers correctement téléversés.
-  if (
-    !rows.some((row) => row.state === "uploaded" || row.state === "parsed")
-  ) {
+  if (!rows.some((row) => row.state === "uploaded" || row.state === "parsed")) {
     throw new Error(
       "Aucun document prêt à traiter : relancez ou ajoutez un fichier."
     );
@@ -557,16 +540,23 @@ export async function startImportProcessing(
   );
 }
 
-export async function extractionDiagnostics(extracted: ExtractedDocument): Promise<string> {
+export async function extractionDiagnostics(
+  extracted: ExtractedDocument
+): Promise<string> {
   const pages = extracted.pages.length;
-  const characters = extracted.pages.reduce((total, page) => total + page.text.length, 0);
+  const characters = extracted.pages.reduce(
+    (total, page) => total + page.text.length,
+    0
+  );
 
   if (extracted.source === "image-llm") {
     return "Lecture image : analyse multimodale non finalisée.";
   }
 
   if (pages > 0) {
-    return `Lecture locale réussie : ${pages} page${pages > 1 ? "s" : ""}, ${characters.toLocaleString("fr-FR")} caractères. La structuration des données n'a pas abouti.`;
+    return `Lecture locale réussie : ${pages} page${pages > 1 ? "s" : ""}, ${characters.toLocaleString(
+      "fr-FR"
+    )} caractères. La structuration des données n'a pas abouti.`;
   }
 
   if (extracted.source === "pdf-llm") {
@@ -574,6 +564,180 @@ export async function extractionDiagnostics(extracted: ExtractedDocument): Promi
   }
 
   return "Lecture locale : aucun contenu exploitable.";
+}
+
+// Extraction (Phase 4) — Storage → lecture → extraction → structure validée.
+// L'orchestration persiste les états de travail :
+//   uploaded → parsing → extracted
+//   parsed   → extracting → extracted
+// Une panne IA après lecture locale revient à parsed, afin que le travail de
+// lecture ne soit pas présenté comme définitivement perdu. Les claims sont
+// atomiques : un second appel concurrent ne peut pas lancer un second fournisseur.
+//
+// Précondition d'état : 'uploaded' EXACTEMENT. L'extraction ne doit jamais
+// transformer un document en cours d'upload ('uploading') ni un document
+// terminal ('failed', 'extracted'…) : le seul état dont on sait que l'objet
+// existe et que son contenu est figé est 'uploaded'. Ce contrôle est placé
+// AVANT le téléchargement et avant toute instanciation de provider : aucun
+// octet n'est lu et aucun appel IA n'est émis pour un document non éligible
+// (pas de coût, pas de surface d'injection).
+async function downloadImportDocumentBytes(
+  supabase: ServerSupabase,
+  document: DatabaseImportDocument
+): Promise<Uint8Array> {
+  const { data: blob, error } = await supabase.storage
+    .from("imports")
+    .download(document.storage_path);
+  if (error || !blob) {
+    throw new Error(
+      `Erreur téléchargement document: ${error?.message ?? "objet introuvable"}`
+    );
+  }
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function persistParsedArtifact(
+  supabase: ServerSupabase,
+  document: DatabaseImportDocument,
+  artifact: ImportParsedArtifact
+): Promise<DatabaseImportDocument> {
+  const { data, error } = await supabase
+    .from("import_documents")
+    .update({
+      state: "parsed",
+      page_count: artifact.pages.length,
+      parsed_artifact: artifact,
+      parsed_at: new Date().toISOString(),
+      error_message: null,
+    })
+    .eq("id", document.id)
+    .eq("state", "parsing")
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(
+      `Lecture locale terminée mais résultat impossible à persister : ${error.message}`
+    );
+  }
+
+  return data as DatabaseImportDocument;
+}
+
+async function markImportDocumentFailed(
+  supabase: ServerSupabase,
+  documentId: string,
+  fromState: "parsing" | "extracting",
+  message: string,
+  pageCount: number | null
+): Promise<void> {
+  const { error } = await supabase
+    .from("import_documents")
+    .update({
+      state: "failed",
+      page_count: pageCount,
+      error_message: message,
+    })
+    .eq("id", documentId)
+    .eq("state", fromState);
+
+  if (error) {
+    throw new Error(
+      `Échec extraction (${message}) et état impossible à persister : ${error.message}`
+    );
+  }
+}
+
+async function persistOrLoadParsedArtifact(
+  supabase: ServerSupabase,
+  document: DatabaseImportDocument,
+  sourceState: "uploaded" | "parsed",
+  bytes: Uint8Array | null
+): Promise<{ document: DatabaseImportDocument; artifact: ImportParsedArtifact; bytes: Uint8Array | null }> {
+  if (sourceState === "parsed") {
+    const persisted = parsePersistedArtifact(document.parsed_artifact);
+    if (persisted) {
+      return { document, artifact: persisted, bytes };
+    }
+
+    // Compatibilité avec les documents créés avant 0020 : une seule lecture
+    // locale de rattrapage permet de construire l'artefact durable. Le document
+    // est déjà en extracting, donc la persistance ne change pas son claim.
+    const recoveryBytes = bytes ?? (await downloadImportDocumentBytes(supabase, document));
+    const local = parseDocumentLocally({
+      documentId: document.id,
+      sourceKind: document.source_kind,
+      filename: document.original_name,
+      bytes: recoveryBytes,
+    });
+
+    if (local.status === "FAILED") {
+      const message =
+        local.errors.map((error) => error.message).join("; ") ||
+        "Document illisible : aucun contenu à extraire";
+      throw new Error(message);
+    }
+
+    const { data, error } = await supabase
+      .from("import_documents")
+      .update({
+        page_count: local.artifact.pages.length,
+        parsed_artifact: local.artifact,
+        parsed_at: new Date().toISOString(),
+        error_message: null,
+      })
+      .eq("id", document.id)
+      .eq("state", "extracting")
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(
+        `Artefact de lecture absent/invalide et rattrapage impossible : ${error.message}`
+      );
+    }
+
+    return {
+      document: data as DatabaseImportDocument,
+      artifact: local.artifact,
+      bytes: recoveryBytes,
+    };
+  }
+
+  const parseBytes =
+    bytes ?? (await downloadImportDocumentBytes(supabase, document));
+  const local = parseDocumentLocally({
+    documentId: document.id,
+    sourceKind: document.source_kind,
+    filename: document.original_name,
+    bytes: parseBytes,
+  });
+
+  if (local.status === "FAILED") {
+    const message =
+      local.errors.map((error) => error.message).join("; ") ||
+      "Document illisible : aucun contenu à extraire";
+    await markImportDocumentFailed(
+      supabase,
+      document.id,
+      "parsing",
+      message,
+      local.pages.length
+    );
+    throw new Error(message);
+  }
+
+  const parsedDocument = await persistParsedArtifact(
+    supabase,
+    document,
+    local.artifact
+  );
+
+  return {
+    document: parsedDocument,
+    artifact: local.artifact,
+    bytes: parseBytes,
+  };
 }
 
 export async function materializeImportDocument(
@@ -584,7 +748,7 @@ export async function materializeImportDocument(
   const supabase = await createServerSupabase();
   await requireAuth(supabase);
 
-  const document = await fetchDocument(supabase, documentId);
+  let document = await fetchDocument(supabase, documentId);
   await requireManagerRole(supabase, document.organization_id);
 
   const session = await fetchSession(supabase, document.session_id);
@@ -623,8 +787,6 @@ export async function materializeImportDocument(
     );
   }
 
-  // Claim atomique : un second onglet/processus qui voit encore l'ancien état
-  // perd la course ici et ne doit jamais atteindre le fournisseur IA.
   const { data: claimed, error: claimError } = await supabase
     .from("import_documents")
     .update({ state: claimTo, error_message: null })
@@ -639,115 +801,156 @@ export async function materializeImportDocument(
     );
   }
 
-  let extracted: ExtractedDocument;
+  document = claimed as DatabaseImportDocument;
+
+  let artifact: ImportParsedArtifact;
+  let bytes: Uint8Array | null = null;
+
   try {
-    extracted = await performImportDocumentExtraction(supabase, {
-      ...document,
-      state: claimTo,
-    });
+    const prepared = await persistOrLoadParsedArtifact(
+      supabase,
+      document,
+      claimFrom as "uploaded" | "parsed",
+      bytes
+    );
+    document = prepared.document;
+    artifact = prepared.artifact;
+    bytes = prepared.bytes;
   } catch (error) {
     const message = (error as Error).message;
-    const { error: failError } = await supabase
-      .from("import_documents")
-      .update({ state: "failed", error_message: message })
-      .eq("id", document.id)
-      .eq("state", claimTo);
-
-    if (failError) {
-      throw new Error(
-        `Extraction échouée (${message}) et état impossible à persister : ${failError.message}`
-      );
+    if (document.state === "parsing") {
+      // persistOrLoadParsedArtifact already persists a normal parse failure;
+      // this branch only handles transport/DB errors before that point.
+      const { error: failError } = await supabase
+        .from("import_documents")
+        .update({ state: "failed", error_message: message })
+        .eq("id", document.id)
+        .eq("state", "parsing");
+      if (failError) {
+        throw new Error(
+          `Extraction échouée (${message}) et état impossible à persister : ${failError.message}`
+        );
+      }
     }
     throw new Error(message);
   }
 
-  const detail =
-    extracted.errors.map((error) => error.message).join("; ") ||
-    extracted.warnings.map((warning) => warning.message).join("; ") ||
-    "Extraction incomplète : aucune sortie exploitable";
-  const diagnostics = await extractionDiagnostics(extracted);
-  const message =
-    detail === "Extraction incomplète : aucune sortie exploitable"
-      ? `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`
-      : `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
+  // Après parsed, seule la structuration IA est reprise. Pour les documents
+  // texte, aucune relecture binaire ni décompression n'est nécessaire.
+  const requiresSourceBytes =
+    artifact.source === "image-llm" || artifact.source === "pdf-llm";
+  if (requiresSourceBytes && !bytes) {
+    bytes = await downloadImportDocumentBytes(supabase, document);
+  }
 
-  // Un échec fournisseur/réponse du modèle est récupérable : le document reste
-  // parsed et peut être repris sans être re-uploadé. Les échecs de lecture ou
-  // de format restent terminalement failed.
-  const retryableExtractionFailure =
-    extracted.status === "PARTIAL" ||
-    extracted.errors.some(
-      (error) =>
-        error.code === "PROVIDER_ERROR" ||
-        error.code === "NO_PROVIDER" ||
-        error.code === "INVALID_OUTPUT"
+  try {
+    const extracted = await structureParsedDocument(
+      {
+        documentId: document.id,
+        sourceKind: document.source_kind,
+        filename: document.original_name,
+        bytes: bytes ?? new Uint8Array(),
+      },
+      artifact,
+      createDefaultProvider()
     );
 
-  if (extracted.status !== "SUCCESS") {
-    const targetState = retryableExtractionFailure ? "parsed" : "failed";
-    const { error: persistError } = await supabase
-      .from("import_documents")
-      .update({
-        state: targetState,
-        page_count: extracted.pages.length,
-        error_message: message,
-      })
-      .eq("id", document.id)
-      .eq("state", claimTo);
+    if (extracted.status !== "SUCCESS") {
+      const detail =
+        extracted.errors.map((error) => error.message).join("; ") ||
+        extracted.warnings.map((warning) => warning.message).join("; ") ||
+        "Extraction incomplète : aucune sortie exploitable";
+      const diagnostics = await extractionDiagnostics(extracted);
+      const message = `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
 
-    if (persistError) {
+      const retryable =
+        extracted.status === "PARTIAL" ||
+        extracted.errors.some(
+          (error) =>
+            error.code === "PROVIDER_ERROR" ||
+            error.code === "NO_PROVIDER" ||
+            error.code === "INVALID_OUTPUT"
+        );
+
+      if (retryable) {
+        const { error: releaseError } = await supabase
+          .from("import_documents")
+          .update({
+            state: "parsed",
+            page_count: extracted.pages.length,
+            parsed_artifact: artifact,
+            parsed_at: new Date().toISOString(),
+            error_message: message,
+          })
+          .eq("id", document.id)
+          .eq("state", "extracting");
+
+        if (releaseError) {
+          throw new Error(
+            `Extraction refusée (${message}) et état impossible à persister : ${releaseError.message}`
+          );
+        }
+      } else {
+        await markImportDocumentFailed(
+          supabase,
+          document.id,
+          "extracting",
+          message,
+          extracted.pages.length
+        );
+      }
+
+      throw new Error(message);
+    }
+
+    const { prepareImportItemsForMaterialization } = await import(
+      "../import/materialization"
+    );
+    const candidates = prepareImportItemsForMaterialization(
+      extracted.candidates,
+      session.id,
+      document.id
+    );
+
+    const { data, error } = await supabase.rpc(
+      "materialize_import_document",
+      {
+        p_document_id: document.id,
+        p_candidates: candidates,
+        p_page_count: extracted.pages.length,
+      }
+    );
+
+    if (error) {
+      const { error: releaseError } = await supabase
+        .from("import_documents")
+        .update({
+          state: "parsed",
+          page_count: extracted.pages.length,
+          parsed_artifact: artifact,
+          parsed_at: new Date().toISOString(),
+          error_message: `Matérialisation impossible: ${error.message}`,
+        })
+        .eq("id", document.id)
+        .eq("state", "extracting");
+
+      if (releaseError) {
+        throw new Error(
+          `Erreur matérialisation transactionnelle: ${error.message}. Libération du document impossible: ${releaseError.message}`
+        );
+      }
+
       throw new Error(
-        `Extraction refusée (${message}) et état impossible à persister : ${persistError.message}`
+        `Erreur matérialisation transactionnelle: ${error.message}`
       );
     }
 
-    throw new Error(message);
+    return (data ?? []) as DatabaseImportItem[];
+  } catch (error) {
+    // Important : le catch ne recasse pas un état déjà durablement parsed ou
+    // extracted. Il ne touche un état que si celui-ci est encore extracting.
+    throw error;
   }
-
-  const { prepareImportItemsForMaterialization } = await import(
-    "../import/materialization"
-  );
-  const candidates = prepareImportItemsForMaterialization(
-    extracted.candidates,
-    session.id,
-    document.id
-  );
-
-  const { data, error } = await supabase.rpc(
-    "materialize_import_document",
-    {
-      p_document_id: document.id,
-      p_candidates: candidates,
-      p_page_count: extracted.pages.length,
-    }
-  );
-
-  if (error) {
-    // Libère le claim : le document reste rejouable et aucun état "extracting"
-    // orphelin ne bloque l'utilisateur après une panne SQL/RPC.
-    const releaseFrom = claimTo;
-    const { error: releaseError } = await supabase
-      .from("import_documents")
-      .update({
-        state: "parsed",
-        page_count: extracted.pages.length,
-        error_message: `Matérialisation impossible: ${error.message}`,
-      })
-      .eq("id", document.id)
-      .eq("state", releaseFrom);
-
-    if (releaseError) {
-      throw new Error(
-        `Erreur matérialisation transactionnelle: ${error.message}. Libération du document impossible: ${releaseError.message}`
-      );
-    }
-
-    throw new Error(
-      `Erreur matérialisation transactionnelle: ${error.message}`
-    );
-  }
-
-  return (data ?? []) as DatabaseImportItem[];
 }
 
 

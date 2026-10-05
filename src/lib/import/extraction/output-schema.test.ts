@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { llmExtractionOutputSchema, validateLlmOutput } from "./output-schema";
+import {
+  llmExtractionOutputSchema,
+  validateLlmOutput,
+  verifyProvenanceAgainstPages,
+  PROVENANCE_INVALID_PAGE_WARNING,
+  PROVENANCE_UNVERIFIED_WARNING,
+} from "./output-schema";
 import type { ExtractedCandidate } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -142,6 +148,73 @@ describe("champ name obligatoire (règle Phase 2)", () => {
       ],
     });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("vérification de provenance", () => {
+  const candidate = (
+    fields: ExtractedCandidate["fields"],
+    page: number | null = 1
+  ): ExtractedCandidate => ({
+    entityType: "product" as const,
+    documentId: "doc",
+    page,
+    fields,
+  });
+
+  it("n'utilise plus le document entier quand la page citée est invalide", () => {
+    const result = verifyProvenanceAgainstPages(
+      [
+        candidate({
+          name: { raw: "Huile", confidence: "high", page: 99 },
+        }, 99),
+      ],
+      [
+        { page: 1, text: "Huile" },
+        { page: 2, text: "Savon" },
+      ]
+    );
+
+    expect(result[0]?.fields.name?.confidence).toBe("low");
+    expect(result[0]?.fields.name?.warning).toBe(PROVENANCE_INVALID_PAGE_WARNING);
+  });
+
+  it("utilise la page propre au champ avant la page du candidat", () => {
+    const result = verifyProvenanceAgainstPages(
+      [
+        candidate(
+          {
+            name: { raw: "Huile", confidence: "high", page: 2 },
+            sale_price: { raw: "2500", confidence: "high" },
+          },
+          1
+        ),
+      ],
+      [
+        { page: 1, text: "Produit Huile" },
+        { page: 2, text: "Huile 2500" },
+      ]
+    );
+
+    expect(result[0]?.fields.name?.confidence).toBe("high");
+    expect(result[0]?.fields.sale_price?.confidence).toBe("low");
+    expect(result[0]?.fields.sale_price?.warning).toBe(PROVENANCE_UNVERIFIED_WARNING);
+  });
+
+  it("conserve la recherche dans tout le document uniquement lorsqu'aucune page n'est citée", () => {
+    const result = verifyProvenanceAgainstPages(
+      [
+        candidate({
+          name: { raw: "Huile", confidence: "high" },
+        }, null),
+      ],
+      [
+        { page: 1, text: "Page 1" },
+        { page: 2, text: "Huile" },
+      ]
+    );
+
+    expect(result[0]?.fields.name?.confidence).toBe("high");
   });
 });
 

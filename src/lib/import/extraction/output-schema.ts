@@ -93,6 +93,12 @@ export function validateLlmOutput(
 export const PROVENANCE_UNVERIFIED_WARNING =
   "Valeur non retrouvée dans le texte de la page citée : citation non fiable.";
 
+export const PROVENANCE_INVALID_PAGE_WARNING =
+  "Page de provenance invalide ou absente du document : citation non vérifiable.";
+
+export const VISION_PROVENANCE_UNVERIFIED_WARNING =
+  "Provenance issue d'une analyse visuelle non corroborée par un texte local : vérification humaine requise.";
+
 // Comparaison insensible à la casse et aux espaces (une valeur « 2 500 » et un
 // document « 2500 » ne doivent pas produire de faux négatif).
 function normalizeForCitation(value: string): string {
@@ -116,18 +122,39 @@ export function verifyProvenanceAgainstPages(
   const wholeDocument = pages.map((page) => page.text).join("\n");
 
   return candidates.map((candidate) => {
-    // Page citée si elle existe et figure réellement dans le document, sinon
-    // le document entier : une valeur absente partout reste absente partout.
-    const cited = candidate.page !== null ? byPage.get(candidate.page) : undefined;
-    const haystack = cited ?? wholeDocument;
-
     let degraded = false;
     const fields: ExtractedCandidate["fields"] = {};
+
     for (const [field, provenance] of Object.entries(candidate.fields)) {
-      if (!provenance || isCitable(haystack, provenance.raw)) {
+      if (!provenance) {
         fields[field] = provenance;
         continue;
       }
+
+      // Chaque champ peut porter sa propre page. À défaut, on utilise la page
+      // du candidat. Une page explicitement citée mais absente du document ne
+      // doit JAMAIS basculer vers le document entier : cela masquerait une
+      // mauvaise citation du modèle.
+      const effectivePage = provenance.page ?? candidate.page;
+      const hasExplicitPage = effectivePage !== null && effectivePage !== undefined;
+      const cited = hasExplicitPage ? byPage.get(effectivePage) : undefined;
+
+      if (hasExplicitPage && cited === undefined) {
+        degraded = true;
+        fields[field] = {
+          ...provenance,
+          confidence: "low",
+          warning: PROVENANCE_INVALID_PAGE_WARNING,
+        };
+        continue;
+      }
+
+      const haystack = cited ?? wholeDocument;
+      if (isCitable(haystack, provenance.raw)) {
+        fields[field] = provenance;
+        continue;
+      }
+
       degraded = true;
       fields[field] = {
         ...provenance,
@@ -135,6 +162,29 @@ export function verifyProvenanceAgainstPages(
         warning: PROVENANCE_UNVERIFIED_WARNING,
       };
     }
+
     return degraded ? { ...candidate, fields } : candidate;
   });
+}
+
+export function markVisionProvenanceUnverified(
+  candidates: ExtractedCandidate[]
+): ExtractedCandidate[] {
+  return candidates.map((candidate) => ({
+    ...candidate,
+    page: null,
+    fields: Object.fromEntries(
+      Object.entries(candidate.fields).map(([field, provenance]) => [
+        field,
+        provenance
+          ? {
+              ...provenance,
+              confidence: "low" as const,
+              page: null,
+              warning: VISION_PROVENANCE_UNVERIFIED_WARNING,
+            }
+          : provenance,
+      ])
+    ),
+  }));
 }

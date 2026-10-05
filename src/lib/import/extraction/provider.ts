@@ -39,12 +39,22 @@ export class ProviderHttpError extends Error {
   }
 }
 
+export class ProviderTransportError extends Error {
+  readonly retryable = true;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ProviderTransportError";
+  }
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const GEMINI_MODEL = "gemini-3.6-flash";
 const GEMINI_FALLBACK_MODELS = ["gemini-3.7-flash", "gemini-3.5-flash"] as const;
 const OPENAI_MODEL = "gpt-4o-mini";
 const MAX_TRANSIENT_RETRIES = 1;
-const RETRY_DELAY_MS = [700] as const;
+const RETRY_BASE_DELAY_MS = 700;
+const MAX_RETRY_DELAY_MS = 10_000;
 
 const ENTITY_TYPES = Object.keys(IMPORT_TARGET_FIELDS);
 
@@ -349,6 +359,28 @@ function isTransientStatus(status: number): boolean {
   return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
+function isTransientTransportError(error: unknown): boolean {
+  if (error instanceof ProviderTransportError) return true;
+  if (error instanceof DOMException) {
+    return error.name === "AbortError" || error.name === "TimeoutError";
+  }
+  if (error instanceof TypeError) {
+    return /fetch failed|network|socket|econnreset|etimedout|eai_again/i.test(error.message);
+  }
+  return false;
+}
+
+function parseRetryAfter(value: string | null, now = Date.now()): number | null {
+  if (!value) return null;
+  const seconds = Number(value.trim());
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_DELAY_MS);
+  }
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return null;
+  return Math.min(Math.max(0, date - now), MAX_RETRY_DELAY_MS);
+}
+
 async function sleep(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -376,10 +408,19 @@ async function fetchProvider(
         signal: AbortSignal.timeout(config.timeoutMs),
       });
     } catch (error) {
-      if (attempt === MAX_TRANSIENT_RETRIES) {
+      if (!isTransientTransportError(error)) {
         throw error;
       }
-      await sleep(RETRY_DELAY_MS[attempt] ?? RETRY_DELAY_MS[RETRY_DELAY_MS.length - 1]);
+      if (attempt === MAX_TRANSIENT_RETRIES) {
+        const message =
+          error instanceof Error ? error.message : "Erreur réseau du fournisseur IA";
+        throw new ProviderTransportError(message, { cause: error });
+      }
+      const delay = Math.min(
+        RETRY_BASE_DELAY_MS * 2 ** attempt,
+        MAX_RETRY_DELAY_MS
+      );
+      await sleep(delay);
       continue;
     }
 
@@ -401,7 +442,12 @@ async function fetchProvider(
       throw error;
     }
 
-    await sleep(RETRY_DELAY_MS[attempt] ?? RETRY_DELAY_MS[RETRY_DELAY_MS.length - 1]);
+    const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+    const backoff = Math.min(
+      RETRY_BASE_DELAY_MS * 2 ** attempt,
+      MAX_RETRY_DELAY_MS
+    );
+    await sleep(retryAfter ?? backoff);
   }
 
   throw new Error("Fournisseur IA indisponible");
@@ -428,8 +474,10 @@ async function callProvider(
       lastError = error;
       if (
         config.type !== "gemini" ||
-        !(error instanceof ProviderHttpError) ||
-        !isTransientStatus(error.status)
+        (!(
+          error instanceof ProviderHttpError && isTransientStatus(error.status)
+        ) &&
+          !isTransientTransportError(error))
       ) {
         throw error;
       }

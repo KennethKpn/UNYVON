@@ -1,14 +1,31 @@
-import { IMPORT_MAX_FILE_BYTES, IMPORT_V1_FORMATS } from "../types";
+import { z } from "zod";
+import {
+  IMPORT_MAX_FILE_BYTES,
+  IMPORT_V1_FORMATS,
+  type ImportParsedArtifact,
+} from "../types";
 import { extractTextContent } from "./adapters";
-import { validateLlmOutput, verifyProvenanceAgainstPages } from "./output-schema";
+import {
+  markVisionProvenanceUnverified,
+  validateLlmOutput,
+  verifyProvenanceAgainstPages,
+} from "./output-schema";
 import type { Provider } from "./provider";
-import type { ExtractedDocument, ExtractionWarning } from "./types";
+import type {
+  ExtractedDocument,
+  ExtractedPage,
+  ExtractionError,
+  ExtractionWarning,
+} from "./types";
 
 export type { Provider, ProviderRequest } from "./provider";
 
 // ---------------------------------------------------------------------------
 // DocumentExtractor — source de données : Storage/document → lecture →
 // extraction → structure intermédiaire validée (Phase 2). Aucune écriture.
+//
+// Le parsing local et la structuration IA sont volontairement séparés afin que
+// le résultat de lecture puisse être persisté puis réutilisé lors d'une reprise.
 // ---------------------------------------------------------------------------
 
 export interface ExtractionInput {
@@ -21,6 +38,23 @@ export interface ExtractionInput {
 export interface DocumentExtractor {
   extract(input: ExtractionInput): Promise<ExtractedDocument>;
 }
+
+export type LocalParseResult =
+  | {
+      status: "READY";
+      artifact: ImportParsedArtifact;
+    }
+  | {
+      status: "VISION_REQUIRED";
+      artifact: ImportParsedArtifact;
+    }
+  | {
+      status: "FAILED";
+      errors: ExtractionError[];
+      warnings: ExtractionWarning[];
+      source: string;
+      pages: ExtractedPage[];
+    };
 
 // Limite raisonnable de texte transmis au fournisseur (protection coût V1).
 const MAX_PROVIDER_TEXT_CHARS = 50_000;
@@ -40,8 +74,7 @@ function imageMimeType(filename: string): string {
 // d'annexe, table des matières, ou tentative d'usurper la pagination). Le
 // marqueur applicatif reste le seul émis ; toute occurrence visuellement
 // identique dans le texte importé est échappée pour ne jamais pouvoir être
-// confondue avec une vraie pagination. L'information reste lisible, seule la
-// syntaxe du faux marqueur est neutralisée.
+// confondue avec une vraie pagination.
 function escapeForgedPageMarkers(text: string): string {
   return text.replace(/\[(?=Page\s+\d+\])/g, "\\[");
 }
@@ -50,136 +83,296 @@ function composeProviderText(
   pages: ExtractedDocument["pages"],
   warnings: ExtractionWarning[]
 ): string {
-  const full = pages
-    .map((page) => `[Page ${page.page}]\n${escapeForgedPageMarkers(page.text)}`)
-    .join("\n\n");
-  if (full.length <= MAX_PROVIDER_TEXT_CHARS) return full;
-  warnings.push({
-    code: "TEXT_TRUNCATED",
-    message: `Texte tronqué à ${MAX_PROVIDER_TEXT_CHARS} caractères pour le fournisseur IA`,
-  });
-  return full.slice(0, MAX_PROVIDER_TEXT_CHARS);
+  const chunks = composeProviderTextChunks(pages, warnings);
+  return chunks[0] ?? "";
 }
 
-async function runExtraction(
+export function composeProviderTextChunks(
+  pages: ExtractedDocument["pages"],
+  warnings: ExtractionWarning[]
+): string[] {
+  const pageBlocks = pages.map(
+    (page) => `[Page ${page.page}]\n${escapeForgedPageMarkers(page.text)}`
+  );
+  const chunks: string[] = [];
+  let current = "";
+
+  const push = (value: string) => {
+    if (!value) return;
+    chunks.push(value);
+  };
+
+  for (const block of pageBlocks) {
+    if (block.length > MAX_PROVIDER_TEXT_CHARS) {
+      if (current) {
+        push(current);
+        current = "";
+      }
+
+      warnings.push({
+        code: "TEXT_CHUNKED",
+        message:
+          "Document volumineux : la structuration IA est découpée en plusieurs segments afin de ne perdre aucune page.",
+      });
+
+      const prefixMatch = block.match(/^\[Page \d+\]\n/);
+      const prefix = prefixMatch?.[0] ?? "";
+      const body = block.slice(prefix.length);
+
+      for (let offset = 0; offset < body.length; offset += MAX_PROVIDER_TEXT_CHARS - prefix.length) {
+        push(prefix + body.slice(offset, offset + MAX_PROVIDER_TEXT_CHARS - prefix.length));
+      }
+      continue;
+    }
+
+    if (!current) {
+      current = block;
+      continue;
+    }
+
+    const candidate = `${current}\n\n${block}`;
+    if (candidate.length <= MAX_PROVIDER_TEXT_CHARS) {
+      current = candidate;
+    } else {
+      push(current);
+      current = block;
+      warnings.push({
+        code: "TEXT_CHUNKED",
+        message:
+          "Document volumineux : la structuration IA est découpée en plusieurs segments afin de ne perdre aucune page.",
+      });
+    }
+  }
+
+  if (current) push(current);
+  return chunks.length > 0 ? chunks : [""];
+}
+function hasValidMagicSignature(sourceKind: string, bytes: Uint8Array): boolean {
+  const startsWith = (signature: number[]) =>
+    signature.every((value, index) => bytes[index] === value);
+
+  switch (sourceKind) {
+    case "pdf":
+      return new TextDecoder("latin1").decode(bytes.slice(0, 5)) === "%PDF-";
+    case "doc":
+      return startsWith([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    case "docx":
+      return startsWith([0x50, 0x4b, 0x03, 0x04]);
+    case "image": {
+      const jpeg = startsWith([0xff, 0xd8, 0xff]);
+      const png = startsWith([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const webp =
+        bytes.length >= 12 &&
+        new TextDecoder("latin1").decode(bytes.slice(0, 4)) === "RIFF" &&
+        new TextDecoder("latin1").decode(bytes.slice(8, 12)) === "WEBP";
+      return jpeg || png || webp;
+    }
+    case "md":
+      // Le Markdown/texte brut n'a pas de signature binaire fiable.
+      return true;
+    default:
+      return false;
+  }
+}
+
+function buildFailed(
   input: ExtractionInput,
+  source: string,
+  pages: ExtractedPage[],
+  warnings: ExtractionWarning[],
+  errors: ExtractionError[]
+): ExtractedDocument {
+  return {
+    status: "FAILED",
+    documentId: input.documentId,
+    sourceKind: input.sourceKind,
+    source,
+    pages,
+    candidates: [],
+    warnings,
+    errors,
+  };
+}
+
+function buildPartial(
+  input: ExtractionInput,
+  artifact: ImportParsedArtifact,
+  warnings: ExtractionWarning[] = [...artifact.warnings],
+  errors: ExtractionError[] = []
+): ExtractedDocument {
+  return {
+    status: "PARTIAL",
+    documentId: input.documentId,
+    sourceKind: input.sourceKind,
+    source: artifact.source,
+    pages: artifact.pages,
+    candidates: [],
+    warnings,
+    errors,
+  };
+}
+
+export function parseDocumentLocally(input: ExtractionInput): LocalParseResult {
+  const baseWarnings: ExtractionWarning[] = [];
+
+  if (input.bytes.length === 0) {
+    return {
+      status: "FAILED",
+      errors: [{ code: "EMPTY_DOCUMENT", message: "Document vide : aucun contenu à extraire" }],
+      warnings: baseWarnings,
+      source: "none",
+      pages: [],
+    };
+  }
+
+  if (input.bytes.length > IMPORT_MAX_FILE_BYTES) {
+    return {
+      status: "FAILED",
+      errors: [{ code: "FILE_TOO_LARGE", message: "Fichier trop volumineux (25 Mo maximum)" }],
+      warnings: baseWarnings,
+      source: "none",
+      pages: [],
+    };
+  }
+
+  const format = IMPORT_V1_FORMATS.find((candidate) => {
+    const kinds: readonly string[] = candidate.sourceKinds;
+    return kinds.includes(input.sourceKind);
+  });
+  if (!format) {
+    return {
+      status: "FAILED",
+      errors: [{ code: "UNSUPPORTED_FORMAT", message: UNSUPPORTED_MESSAGE }],
+      warnings: baseWarnings,
+      source: "none",
+      pages: [],
+    };
+  }
+
+  if (!hasValidMagicSignature(input.sourceKind, input.bytes)) {
+    return {
+      status: "FAILED",
+      errors: [{
+        code: "INVALID_FILE_SIGNATURE",
+        message:
+          "Signature binaire du fichier incompatible avec le format annoncé",
+      }],
+      warnings: baseWarnings,
+      source: "none",
+      pages: [],
+    };
+  }
+
+  if (input.sourceKind === "image") {
+    return {
+      status: "VISION_REQUIRED",
+      artifact: {
+        version: 1,
+        source: "image-llm",
+        pages: [],
+        warnings: [],
+      },
+    };
+  }
+
+  const extraction = extractTextContent(input.sourceKind, input.bytes);
+  if (extraction?.error) {
+    return {
+      status: "FAILED",
+      errors: [{ code: extraction.error.code, message: extraction.error.message }],
+      warnings: extraction.warnings,
+      source: extraction.source,
+      pages: extraction.pages,
+    };
+  }
+
+  if (!extraction || extraction.pages.length === 0) {
+    if (input.sourceKind === "pdf") {
+      return {
+        status: "VISION_REQUIRED",
+        artifact: {
+          version: 1,
+          source: "pdf-llm",
+          pages: [],
+          warnings: [
+            {
+              code: "PDF_VISION_FALLBACK",
+              message:
+                "Lecture locale du PDF sans texte exploitable : analyse visuelle Gemini utilisée en secours.",
+            },
+          ],
+        },
+      };
+    }
+
+    return {
+      status: "FAILED",
+      errors: [
+        {
+          code: "UNREADABLE_DOCUMENT",
+          message: "Document illisible : aucun texte extrait",
+        },
+      ],
+      warnings: extraction?.warnings ?? [],
+      source: extraction?.source ?? "none",
+      pages: extraction?.pages ?? [],
+    };
+  }
+
+  return {
+    status: "READY",
+    artifact: {
+      version: 1,
+      source: extraction.source,
+      pages: extraction.pages,
+      warnings: extraction.warnings,
+    },
+  };
+}
+
+export function parsePersistedArtifact(value: unknown): ImportParsedArtifact | null {
+  const pageSchema = z.strictObject({
+    page: z.number().int().min(1),
+    text: z.string(),
+  });
+
+  const warningSchema = z.strictObject({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    page: z.number().int().min(1).nullable().optional(),
+  });
+
+  const schema = z.strictObject({
+    version: z.literal(1),
+    source: z.string().min(1),
+    pages: z.array(pageSchema),
+    warnings: z.array(warningSchema),
+  });
+
+  const parsed = schema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+export async function structureParsedDocument(
+  input: ExtractionInput,
+  artifact: ImportParsedArtifact,
   provider: Provider | null
 ): Promise<ExtractedDocument> {
   const document: ExtractedDocument = {
     status: "FAILED",
     documentId: input.documentId,
     sourceKind: input.sourceKind,
-    source: "none",
-    pages: [],
+    source: artifact.source,
+    pages: artifact.pages,
     candidates: [],
-    warnings: [],
+    warnings: [...artifact.warnings],
     errors: [],
   };
+
   const fail = (code: string, message: string): ExtractedDocument => {
     document.errors.push({ code, message });
     return document;
   };
-
-  if (input.bytes.length === 0) {
-    return fail("EMPTY_DOCUMENT", "Document vide : aucun contenu à extraire");
-  }
-  if (input.bytes.length > IMPORT_MAX_FILE_BYTES) {
-    return fail("FILE_TOO_LARGE", "Fichier trop volumineux (25 Mo maximum)");
-  }
-
-  const format = IMPORT_V1_FORMATS.find((f) => {
-    const kinds: readonly string[] = f.sourceKinds;
-    return kinds.includes(input.sourceKind);
-  });
-  if (!format) {
-    return fail("UNSUPPORTED_FORMAT", UNSUPPORTED_MESSAGE);
-  }
-
-  // --- Images : extraction multimodale, uniquement côté serveur -------------
-  if (input.sourceKind === "image") {
-    document.source = "image-llm";
-    if (!provider) {
-      document.warnings.push({
-        code: "NO_PROVIDER",
-        message: "Aucun fournisseur IA configuré : image non extractible",
-      });
-      return fail(
-        "NO_PROVIDER",
-        "Fournisseur IA indisponible : impossible de lire cette image"
-      );
-    }
-    let raw: unknown;
-    try {
-      raw = await provider.parse({
-        kind: "image",
-        mimeType: imageMimeType(input.filename),
-        base64: Buffer.from(input.bytes).toString("base64"),
-      });
-    } catch (error) {
-      return fail("PROVIDER_ERROR", (error as Error).message);
-    }
-    const validated = validateLlmOutput(raw, input.documentId);
-    if (!validated.ok) {
-      document.warnings.push({
-        code: "INVALID_OUTPUT",
-        message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
-      });
-      return fail("INVALID_OUTPUT", "Aucune donnée exploitable dans l'image");
-    }
-    // Voie image : aucune page de référence n'est disponible, la vérification
-    // de provenance est donc neutre (document.pages est vide à ce stade).
-    document.candidates = verifyProvenanceAgainstPages(validated.candidates, document.pages);
-    document.status = "SUCCESS";
-    return document;
-  }
-
-  // --- Formats texte : lecture locale puis structuration optionnelle --------
-  const extraction = extractTextContent(input.sourceKind, input.bytes);
-  if (extraction?.error) {
-    return fail(extraction.error.code, extraction.error.message);
-  }
-  if (!extraction || extraction.pages.length === 0) {
-    if (input.sourceKind === "pdf" && provider) {
-      document.source = "pdf-llm";
-      document.warnings.push({
-        code: "PDF_VISION_FALLBACK",
-        message:
-          "Lecture locale du PDF sans texte exploitable : analyse visuelle Gemini utilisée en secours.",
-      });
-
-      let raw: unknown;
-      try {
-        raw = await provider.parse({
-          kind: "document",
-          mimeType: "application/pdf",
-          base64: Buffer.from(input.bytes).toString("base64"),
-        });
-      } catch (error) {
-        return fail("PROVIDER_ERROR", (error as Error).message);
-      }
-
-      const validated = validateLlmOutput(raw, input.documentId);
-      if (!validated.ok) {
-        document.warnings.push({
-          code: "INVALID_OUTPUT",
-          message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
-        });
-        return fail(
-          "INVALID_OUTPUT",
-          "Aucune donnée exploitable dans le PDF"
-        );
-      }
-
-      document.candidates = validated.candidates;
-      document.status = "SUCCESS";
-      return document;
-    }
-
-    return fail("UNREADABLE_DOCUMENT", "Document illisible : aucun texte extrait");
-  }
-  document.source = extraction.source;
-  document.pages = extraction.pages;
-  document.warnings.push(...extraction.warnings);
 
   if (!provider) {
     document.warnings.push({
@@ -191,35 +384,138 @@ async function runExtraction(
     return document;
   }
 
-  const providerText = composeProviderText(document.pages, document.warnings);
-  let raw: unknown;
-  try {
-    raw = await provider.parse({ kind: "text", text: providerText });
-  } catch (error) {
-    document.errors.push({
-      code: "PROVIDER_ERROR",
-      message: (error as Error).message,
-    });
-    document.status = "PARTIAL";
+  // Les deux voies multimodales nécessitent encore le binaire original.
+  if (artifact.source === "image-llm" || artifact.source === "pdf-llm") {
+    const request =
+      artifact.source === "image-llm"
+        ? {
+            kind: "image" as const,
+            mimeType: imageMimeType(input.filename),
+            base64: Buffer.from(input.bytes).toString("base64"),
+          }
+        : {
+            kind: "document" as const,
+            mimeType: "application/pdf",
+            base64: Buffer.from(input.bytes).toString("base64"),
+          };
+
+    let raw: unknown;
+    try {
+      raw = await provider.parse(request);
+    } catch (error) {
+      return fail("PROVIDER_ERROR", (error as Error).message);
+    }
+
+    const validated = validateLlmOutput(raw, input.documentId);
+    if (!validated.ok) {
+      document.warnings.push({
+        code: "INVALID_OUTPUT",
+        message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
+      });
+      return fail(
+        "INVALID_OUTPUT",
+        artifact.source === "image-llm"
+          ? "Aucune donnée exploitable dans l'image"
+          : "Aucune donnée exploitable dans le PDF"
+      );
+    }
+
+    document.candidates =
+      artifact.pages.length > 0
+        ? verifyProvenanceAgainstPages(validated.candidates, artifact.pages)
+        : markVisionProvenanceUnverified(validated.candidates);
+    if (artifact.pages.length === 0) {
+      document.warnings.push({
+        code: "VISION_PROVENANCE_UNVERIFIED",
+        message:
+          "Analyse visuelle réussie mais aucune transcription locale ne permet de corroborer les citations : vérification humaine requise avant import.",
+      });
+    }
+    document.status = "SUCCESS";
     return document;
   }
 
-  const validated = validateLlmOutput(raw, input.documentId);
-  if (!validated.ok) {
-    document.warnings.push({
-      code: "INVALID_OUTPUT",
-      message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
-    });
-    document.status = "PARTIAL";
-    return document;
+  if (artifact.pages.length === 0) {
+    return fail("UNREADABLE_DOCUMENT", "Document illisible : aucun texte extrait");
   }
 
-  document.candidates = verifyProvenanceAgainstPages(validated.candidates, document.pages);
+  const providerTexts = composeProviderTextChunks(
+    document.pages,
+    document.warnings
+  );
+
+  const candidates = [];
+  for (const providerText of providerTexts) {
+    let raw: unknown;
+    try {
+      raw = await provider.parse({ kind: "text", text: providerText });
+    } catch (error) {
+      document.errors.push({
+        code: "PROVIDER_ERROR",
+        message: (error as Error).message,
+      });
+      document.status = "PARTIAL";
+      return document;
+    }
+
+    const validated = validateLlmOutput(raw, input.documentId);
+    if (!validated.ok) {
+      document.warnings.push({
+        code: "INVALID_OUTPUT",
+        message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
+      });
+      document.status = "PARTIAL";
+      return document;
+    }
+
+    candidates.push(...validated.candidates);
+  }
+
+  document.candidates = verifyProvenanceAgainstPages(
+    candidates,
+    document.pages
+  );
   document.status = "SUCCESS";
   return document;
 }
 
-export function createDocumentExtractor(deps: { provider: Provider | null }): DocumentExtractor {
+async function runExtraction(
+  input: ExtractionInput,
+  provider: Provider | null
+): Promise<ExtractedDocument> {
+  const local = parseDocumentLocally(input);
+
+  if (local.status === "FAILED") {
+    return buildFailed(
+      input,
+      local.source,
+      local.pages,
+      local.warnings,
+      local.errors
+    );
+  }
+
+  if (local.status === "VISION_REQUIRED" && !provider) {
+    return buildFailed(
+      input,
+      local.artifact.source,
+      local.artifact.pages,
+      local.artifact.warnings,
+      [
+        {
+          code: "NO_PROVIDER",
+          message: "Fournisseur IA indisponible : cette source nécessite une analyse multimodale",
+        },
+      ]
+    );
+  }
+
+  return structureParsedDocument(input, local.artifact, provider);
+}
+
+export function createDocumentExtractor(deps: {
+  provider: Provider | null;
+}): DocumentExtractor {
   return {
     extract: (input) => runExtraction(input, deps.provider),
   };

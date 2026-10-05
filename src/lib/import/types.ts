@@ -148,6 +148,24 @@ export interface DatabaseImportSession {
   updated_at: string;
 }
 
+export interface ImportParsedPage {
+  page: number;
+  text: string;
+}
+
+export interface ImportParsedWarning {
+  code: string;
+  message: string;
+  page?: number | null;
+}
+
+export interface ImportParsedArtifact {
+  version: 1;
+  source: string;
+  pages: ImportParsedPage[];
+  warnings: ImportParsedWarning[];
+}
+
 export interface DatabaseImportDocument {
   id: string;
   session_id: string;
@@ -159,6 +177,8 @@ export interface DatabaseImportDocument {
   storage_path: string;
   state: ImportDocumentState;
   page_count: number | null;
+  parsed_artifact: ImportParsedArtifact | null;
+  parsed_at: string | null;
   error_message: string | null;
   processed_at: string | null;
   created_at: string;
@@ -205,6 +225,8 @@ export interface ImportDocument {
   storagePath: string;
   state: ImportDocumentState;
   pageCount: number | null;
+  parsedArtifact: ImportParsedArtifact | null;
+  parsedAt: string | null;
   errorMessage: string | null;
   processedAt: string | null;
   createdAt: string;

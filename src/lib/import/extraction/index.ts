@@ -12,8 +12,13 @@ export type {
   ExtractionWarning,
 } from "./types";
 
-export type { ExtractionInput, DocumentExtractor } from "./extractor";
-export { createDocumentExtractor } from "./extractor";
+export type { ExtractionInput, DocumentExtractor, LocalParseResult } from "./extractor";
+export {
+  createDocumentExtractor,
+  parseDocumentLocally,
+  parsePersistedArtifact,
+  structureParsedDocument,
+} from "./extractor";
 
 export type { Provider, ProviderRequest, ProviderConfig } from "./provider";
 export {

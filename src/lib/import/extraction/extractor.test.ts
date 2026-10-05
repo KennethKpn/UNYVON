@@ -1,7 +1,14 @@
 import { deflateRawSync, deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { MAX_DECOMPRESSED_BYTES } from "./decompression";
-import { createDocumentExtractor, type Provider } from "./extractor";
+import {
+  createDocumentExtractor,
+  composeProviderTextChunks,
+  parseDocumentLocally,
+  parsePersistedArtifact,
+  structureParsedDocument,
+  type Provider,
+} from "./extractor";
 import type { ExtractedDocument } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -169,8 +176,114 @@ describe("formats V1 valides", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Parsing local durable
+// ---------------------------------------------------------------------------
+
+describe("artefact de parsing durable", () => {
+  it("produit un artefact versionné réutilisable après lecture locale", () => {
+    const result = parseDocumentLocally({
+      documentId: DOC_ID,
+      sourceKind: "md",
+      filename: "catalogue.md",
+      bytes: enc("Produit A — 10 000 FCFA"),
+    });
+
+    expect(result.status).toBe("READY");
+    if (result.status !== "READY") return;
+    expect(result.artifact.version).toBe(1);
+    expect(result.artifact.source).toBe("markdown-local");
+    expect(result.artifact.pages).toEqual([
+      { page: 1, text: "Produit A — 10 000 FCFA" },
+    ]);
+
+    expect(parsePersistedArtifact(JSON.parse(JSON.stringify(result.artifact)))).toEqual(
+      result.artifact
+    );
+  });
+
+  it("refuse un artefact persistant malformé plutôt que de le traiter aveuglément", () => {
+    expect(
+      parsePersistedArtifact({
+        version: 1,
+        source: "markdown-local",
+        pages: [{ page: 0, text: "x" }],
+        warnings: [],
+      })
+    ).toBeNull();
+
+    expect(parsePersistedArtifact({
+      version: 2,
+      source: "markdown-local",
+      pages: [],
+      warnings: [],
+    })).toBeNull();
+  });
+
+  it("structure un artefact déjà parsé sans reparcourir le document", async () => {
+    const artifact = {
+      version: 1 as const,
+      source: "markdown-local",
+      pages: [{ page: 1, text: "Produit A — 10 000 FCFA" }],
+      warnings: [],
+    };
+
+    const doc = await structureParsedDocument(
+      {
+        documentId: DOC_ID,
+        sourceKind: "md",
+        filename: "catalogue.md",
+        bytes: new Uint8Array(),
+      },
+      artifact,
+      fakeProvider(VALID_OUTPUT)
+    );
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages).toEqual(artifact.pages);
+    expect(doc.candidates).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 5. Format interdit
 // ---------------------------------------------------------------------------
+
+describe("signature binaire", () => {
+  it("refuse un PDF dont la signature ne correspond pas au format annoncé", async () => {
+    const doc = await run("pdf", enc("ceci est du texte, pas un PDF"));
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("INVALID_FILE_SIGNATURE");
+  });
+
+  it("refuse une image PNG usurpée avec un contenu arbitraire", async () => {
+    const doc = await run("image", enc("not a png"), null, "photo.png");
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("INVALID_FILE_SIGNATURE");
+  });
+
+  it("accepte les signatures natives des formats binaires V1", async () => {
+    const pdf = await run("pdf", enc("%PDF-1.7\n"), null);
+    expect(pdf.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+
+    const docx = await run("docx", new Uint8Array([0x50, 0x4b, 0x03, 0x04]), null);
+    expect(docx.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+
+    const doc = await run(
+      "doc",
+      new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+      null
+    );
+    expect(doc.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+
+    const png = await run(
+      "image",
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      null,
+      "photo.png"
+    );
+    expect(png.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+  });
+});
 
 describe("format interdit", () => {
   it("refuse proprement un format hors V1 sans appel fournisseur", async () => {
@@ -362,7 +475,7 @@ describe("robustesse fournisseur", () => {
     const longDoc = "mot ".repeat(30000);
     const doc = await run("md", enc(longDoc), fakeProvider(VALID_OUTPUT));
     expect(doc.status).toBe("SUCCESS");
-    expect(doc.warnings.some((w) => w.code === "TEXT_TRUNCATED")).toBe(true);
+    expect(doc.warnings.some((w) => w.code === "TEXT_CHUNKED")).toBe(true);
   });
 
   it("fichier > 25 Mo refusé avant toute extraction", async () => {
