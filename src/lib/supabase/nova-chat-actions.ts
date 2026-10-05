@@ -10,6 +10,7 @@ import {
   createGeminiInteraction,
   createGeminiInteractionWithFallback,
   getFunctionCalls,
+  getInteractionOutputText,
   GeminiApiError,
   NOVA_GEMINI_MODEL,
 } from "../intelligence/gemini-client";
@@ -301,7 +302,7 @@ async function produceAssistantResponse(args: {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const calls = getFunctionCalls(interaction);
     if (calls.length === 0) {
-      const content = interaction.output_text?.trim();
+      const content = getInteractionOutputText(interaction);
       if (!content) throw new Error("NOVA n'a pas produit de réponse textuelle");
       return { content, interactionId: interaction.id, model: activeModel };
     }
