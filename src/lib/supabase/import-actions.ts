@@ -513,16 +513,18 @@ async function markImportDocumentFailed(
 async function persistOrLoadParsedArtifact(
   supabase: ServerSupabase,
   document: DatabaseImportDocument,
+  sourceState: "uploaded" | "parsed",
   bytes: Uint8Array | null
 ): Promise<{ document: DatabaseImportDocument; artifact: ImportParsedArtifact; bytes: Uint8Array | null }> {
-  if (document.state === "parsed") {
+  if (sourceState === "parsed") {
     const persisted = parsePersistedArtifact(document.parsed_artifact);
     if (persisted) {
       return { document, artifact: persisted, bytes };
     }
 
     // Compatibilité avec les documents créés avant 0020 : une seule lecture
-    // locale de rattrapage permet de construire l'artefact durable.
+    // locale de rattrapage permet de construire l'artefact durable. Le document
+    // est déjà en extracting, donc la persistance ne change pas son claim.
     const recoveryBytes = bytes ?? (await downloadImportDocumentBytes(supabase, document));
     const local = parseDocumentLocally({
       documentId: document.id,
@@ -532,7 +534,8 @@ async function persistOrLoadParsedArtifact(
     });
 
     if (local.status === "FAILED") {
-      const message = local.errors.map((error) => error.message).join("; ") ||
+      const message =
+        local.errors.map((error) => error.message).join("; ") ||
         "Document illisible : aucun contenu à extraire";
       throw new Error(message);
     }
@@ -546,13 +549,13 @@ async function persistOrLoadParsedArtifact(
         error_message: null,
       })
       .eq("id", document.id)
-      .eq("state", "parsed")
+      .eq("state", "extracting")
       .select()
       .single();
 
     if (error) {
       throw new Error(
-        `Artefact de lecture existant invalide et rattrapage impossible : ${error.message}`
+        `Artefact de lecture absent/invalide et rattrapage impossible : ${error.message}`
       );
     }
 
@@ -563,7 +566,8 @@ async function persistOrLoadParsedArtifact(
     };
   }
 
-  const parseBytes = bytes ?? (await downloadImportDocumentBytes(supabase, document));
+  const parseBytes =
+    bytes ?? (await downloadImportDocumentBytes(supabase, document));
   const local = parseDocumentLocally({
     documentId: document.id,
     sourceKind: document.source_kind,
@@ -587,122 +591,15 @@ async function persistOrLoadParsedArtifact(
 
   const parsedDocument = await persistParsedArtifact(
     supabase,
-    { ...document, state: "parsing" },
+    document,
     local.artifact
   );
 
-  return { document: parsedDocument, artifact: local.artifact, bytes: parseBytes };
-}
-
-// Phase 5A : extraction validée -> import_items.
-// La DB reste l'autorité de rattachement org/session/document.
-// La finalisation SQL est idempotente : un second appel après extracted
-// retourne les lignes existantes au lieu de les recréer.
-export async function extractImportDocument(
-  documentId: string
-): Promise<ExtractedDocument> {
-  const parsedId = uuidSchema.safeParse(documentId);
-  if (!parsedId.success) throw new Error("Identifiant document invalide");
-
-  const supabase = await createServerSupabase();
-  await requireAuth(supabase);
-
-  const document = await fetchDocument(supabase, documentId);
-  await requireManagerRole(supabase, document.organization_id);
-
-  if (document.state !== "uploaded") {
-    throw new Error(
-      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${document.state})`
-    );
-  }
-
-  return performImportDocumentExtraction(supabase, document);
-}
-
-// Démarre le traitement d'une session uniquement lorsque tous les documents
-// présents sont réellement uploaded. Le double clic est idempotent : processing
-// est simplement renvoyé.
-export async function startImportProcessing(
-  sessionId: string
-): Promise<DatabaseImportSession> {
-  uuidSchema.parse(sessionId);
-
-  const supabase = await createServerSupabase();
-  await requireAuth(supabase);
-
-  const session = await fetchSession(supabase, sessionId);
-  await requireManagerRole(supabase, session.organization_id);
-
-  if (session.state === "processing") return session;
-  if (session.state !== "collecting") {
-    throw new Error(
-      `Démarrage du traitement non autorisé depuis l'état ${session.state}`
-    );
-  }
-
-  const { data: documents, error: documentsError } = await supabase
-    .from("import_documents")
-    .select("id, state")
-    .eq("session_id", sessionId)
-    .order("created_at", { ascending: true });
-
-  if (documentsError) {
-    throw new Error(
-      `Erreur lecture documents avant traitement: ${documentsError.message}`
-    );
-  }
-
-  const rows = documents ?? [];
-  if (rows.length === 0) {
-    throw new Error("Impossible de traiter une session sans document");
-  }
-
-  // Un ou plusieurs documents peuvent être déjà en échec : ils restent
-  // visibles et relançables, mais ne doivent pas empêcher le traitement des
-  // autres fichiers correctement téléversés.
-  if (
-    !rows.some((row) => row.state === "uploaded" || row.state === "parsed")
-  ) {
-    throw new Error(
-      "Aucun document prêt à traiter : relancez ou ajoutez un fichier."
-    );
-  }
-
-  const { data, error } = await supabase
-    .from("import_sessions")
-    .update({ state: "processing" })
-    .eq("id", sessionId)
-    .eq("state", "collecting")
-    .select()
-    .single();
-
-  if (!error) return data as DatabaseImportSession;
-
-  const latest = await fetchSession(supabase, sessionId);
-  if (latest.state === "processing") return latest;
-
-  throw new Error(
-    `Erreur démarrage du traitement d'import: ${error.message}`
-  );
-}
-
-export async function extractionDiagnostics(extracted: ExtractedDocument): Promise<string> {
-  const pages = extracted.pages.length;
-  const characters = extracted.pages.reduce((total, page) => total + page.text.length, 0);
-
-  if (extracted.source === "image-llm") {
-    return "Lecture image : analyse multimodale non finalisée.";
-  }
-
-  if (pages > 0) {
-    return `Lecture locale réussie : ${pages} page${pages > 1 ? "s" : ""}, ${characters.toLocaleString("fr-FR")} caractères. La structuration des données n'a pas abouti.`;
-  }
-
-  if (extracted.source === "pdf-llm") {
-    return "Lecture locale du PDF : aucun texte exploitable. Le fallback visuel IA n'a pas abouti.";
-  }
-
-  return "Lecture locale : aucun contenu exploitable.";
+  return {
+    document: parsedDocument,
+    artifact: local.artifact,
+    bytes: parseBytes,
+  };
 }
 
 export async function materializeImportDocument(
@@ -775,6 +672,7 @@ export async function materializeImportDocument(
     const prepared = await persistOrLoadParsedArtifact(
       supabase,
       document,
+      claimFrom as "uploaded" | "parsed",
       bytes
     );
     document = prepared.document;
