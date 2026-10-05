@@ -55,7 +55,10 @@ export function exactImportDedupFingerprint(
     entityType,
     Object.keys(fields)
       .sort()
-      .map((field) => [field, canonicalDedupScalar(field, fields[field]!)]),
+      .map((field) => {
+        const value = fields[field];
+        return [field, value ? canonicalDedupScalar(field, value) : "missing"];
+      }),
   ]);
 }
 
