@@ -187,13 +187,13 @@ export function sanitizeImportStorageFileName(fileName: string): string {
 
   const normalized = stem
     .normalize("NFD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9_-]+/g, "_")
     .replace(/_+/g, "_")
     .replace(/^[_-]+|[_-]+$/g, "");
 
   const safeStem = (normalized || "document").slice(0, 180);
-  const safeExtension = /^\\.[a-z0-9]{1,8}$/.test(extension) ? extension : "";
+  const safeExtension = /^\.[a-z0-9]{1,8}$/.test(extension) ? extension : "";
   return safeStem + safeExtension;
 }
 
