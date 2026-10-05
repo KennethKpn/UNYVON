@@ -1,7 +1,13 @@
 import { deflateRawSync, deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { MAX_DECOMPRESSED_BYTES } from "./decompression";
-import { createDocumentExtractor, type Provider } from "./extractor";
+import {
+  createDocumentExtractor,
+  parseDocumentLocally,
+  parsePersistedArtifact,
+  structureParsedDocument,
+  type Provider,
+} from "./extractor";
 import type { ExtractedDocument } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -165,6 +171,75 @@ describe("formats V1 valides", () => {
     });
     expect(doc.status).toBe("SUCCESS");
     expect(doc.candidates.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parsing local durable
+// ---------------------------------------------------------------------------
+
+describe("artefact de parsing durable", () => {
+  it("produit un artefact versionné réutilisable après lecture locale", () => {
+    const result = parseDocumentLocally({
+      documentId: DOC_ID,
+      sourceKind: "md",
+      filename: "catalogue.md",
+      bytes: enc("Produit A — 10 000 FCFA"),
+    });
+
+    expect(result.status).toBe("READY");
+    if (result.status !== "READY") return;
+    expect(result.artifact.version).toBe(1);
+    expect(result.artifact.source).toBe("markdown-local");
+    expect(result.artifact.pages).toEqual([
+      { page: 1, text: "Produit A — 10 000 FCFA" },
+    ]);
+
+    expect(parsePersistedArtifact(JSON.parse(JSON.stringify(result.artifact)))).toEqual(
+      result.artifact
+    );
+  });
+
+  it("refuse un artefact persistant malformé plutôt que de le traiter aveuglément", () => {
+    expect(
+      parsePersistedArtifact({
+        version: 1,
+        source: "markdown-local",
+        pages: [{ page: 0, text: "x" }],
+        warnings: [],
+      })
+    ).toBeNull();
+
+    expect(parsePersistedArtifact({
+      version: 2,
+      source: "markdown-local",
+      pages: [],
+      warnings: [],
+    })).toBeNull();
+  });
+
+  it("structure un artefact déjà parsé sans reparcourir le document", async () => {
+    const artifact = {
+      version: 1 as const,
+      source: "markdown-local",
+      pages: [{ page: 1, text: "Produit A — 10 000 FCFA" }],
+      warnings: [],
+    };
+
+    const doc = await structureParsedDocument(
+      {
+        documentId: DOC_ID,
+        sourceKind: "md",
+        filename: "catalogue.md",
+        bytes: new Uint8Array(),
+      },
+      artifact,
+      fakeProvider(VALID_OUTPUT)
+    );
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages).toEqual(artifact.pages);
+    expect(doc.candidates).toHaveLength(1);
   });
 });
 
