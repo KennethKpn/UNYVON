@@ -25,16 +25,43 @@ export function prepareImportItemsForMaterialization(
     );
   }
 
-  const seen = new Set<string>();
-  const uniqueCandidates = candidates.filter((candidate) => {
+  const seen = new Map<string, number>();
+  const uniqueCandidates: ExtractedCandidate[] = [];
+
+  for (const candidate of candidates) {
     const fingerprint = exactImportDedupFingerprint(
       candidate.entityType,
       candidate.fields
     );
-    if (seen.has(fingerprint)) return false;
-    seen.add(fingerprint);
-    return true;
-  });
+    const existingIndex = seen.get(fingerprint);
+
+    if (existingIndex === undefined) {
+      seen.set(fingerprint, uniqueCandidates.length);
+      uniqueCandidates.push(candidate);
+      continue;
+    }
+
+    const existing = uniqueCandidates[existingIndex];
+    if (existing?.fields.name) {
+      const duplicatePage = candidate.page;
+      const message = duplicatePage
+        ? `Doublon exact détecté : occurrence supplémentaire ignorée (page ${duplicatePage}).`
+        : "Doublon exact détecté : occurrence supplémentaire ignorée.";
+      const previousWarning = existing.fields.name.warning;
+      uniqueCandidates[existingIndex] = {
+        ...existing,
+        fields: {
+          ...existing.fields,
+          name: {
+            ...existing.fields.name,
+            warning: previousWarning
+              ? `${previousWarning} ${message}`
+              : message,
+          },
+        },
+      };
+    }
+  }
 
   return uniqueCandidates.map((candidate, index) => {
     if (candidate.documentId !== documentId) {
