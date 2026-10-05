@@ -917,7 +917,10 @@ describe("materializeImportDocument — parsing durable", () => {
     documentId: h.DOC,
     sourceKind: "pdf",
     source: "pdf-local",
-    pages: [{ page: 1, text: "Produit Test" }],
+    pages: [
+      { page: 1, text: "Produit Test" },
+      { page: 2, text: "Suite Produit Test" },
+    ],
     candidates: [],
     warnings: [],
     errors: [],
