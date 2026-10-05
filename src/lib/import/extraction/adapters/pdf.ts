@@ -290,7 +290,7 @@ export function extractPdfPages(
   }
 
   const pageObjects = objects.filter((obj) =>
-    /\/Type\s*\/Page[\s/]/.test(obj.body)
+    /\/Type\s*\/?Page(?:[\s/]|$)/.test(obj.body)
   );
   const pages: ExtractedPage[] = [];
   const cmapCache = new Map<number, ToUnicodeMap | null>();
