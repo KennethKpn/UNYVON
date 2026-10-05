@@ -108,7 +108,7 @@ export default function ImportPage(){
       const selected=Array.from(files);
       if(selected.length===0) return;
       if(selected.length>5){
-        setError("Vous pouvez importer jusqu à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
+        setError("Vous pouvez importer jusqu'à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
         return;
       }
       const results=await Promise.allSettled(selected.map(async(file)=>{
@@ -286,7 +286,7 @@ export default function ImportPage(){
       </div>
     </div>
     {(error||notice)&&<div data-testid={error?"import-upload-error":undefined} role={error?"alert":"status"} className={error?"p-3 rounded-[10px] bg-error/10 text-error text-sm":"p-3 rounded-[10px] bg-success/10 text-success text-sm"}><span className="flex items-center gap-2"><AlertCircle className="w-4 h-4"/>{error||notice}</span></div>}
-    {uploadErrors.length>0&&<div role="alert" className="p-3 rounded-[10px] border border-error/20 bg-error/5 text-error text-sm">
+    {uploadErrors.length>0&&<div data-testid="import-upload-error-details" role="alert" className="p-3 rounded-[10px] border border-error/20 bg-error/5 text-error text-sm">
       <p className="font-medium mb-1">Fichiers refusés ou échoués</p>
       <ul className="space-y-1">{uploadErrors.map((message,index)=><li key={index}>• {message}</li>)}</ul>
     </div>}
