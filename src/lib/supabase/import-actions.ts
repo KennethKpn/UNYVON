@@ -548,7 +548,7 @@ export async function startImportProcessing(
   );
 }
 
-export function extractionDiagnostics(extracted: ExtractedDocument): string {
+export async function extractionDiagnostics(extracted: ExtractedDocument): Promise<string> {
   const pages = extracted.pages.length;
   const characters = extracted.pages.reduce((total, page) => total + page.text.length, 0);
 
@@ -624,7 +624,7 @@ export async function materializeImportDocument(
       extracted.errors.map((error) => error.message).join("; ") ||
       extracted.warnings.map((warning) => warning.message).join("; ") ||
       "Extraction incomplète : aucune sortie exploitable";
-    const diagnostics = extractionDiagnostics(extracted);
+    const diagnostics = await extractionDiagnostics(extracted);
     const message = `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
 
     await supabase
