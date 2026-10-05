@@ -1,4 +1,5 @@
 import { importItemInputSchema } from "./schemas";
+import { exactImportDedupFingerprint } from "./matching";
 import type { ExtractedCandidate } from "./extraction/types";
 import type { ImportEntityType, ImportFieldProvenance } from "./types";
 
@@ -24,7 +25,15 @@ export function prepareImportItemsForMaterialization(
     );
   }
 
-  return candidates.map((candidate, index) => {
+  const uniqueCandidates = candidates.filter((candidate, index) => {
+    const fingerprint = exactImportDedupFingerprint(candidate.entityType, candidate.fields);
+    return candidates.findIndex(
+      (other) =>
+        exactImportDedupFingerprint(other.entityType, other.fields) === fingerprint
+    ) === index;
+  });
+
+  return uniqueCandidates.map((candidate, index) => {
     if (candidate.documentId !== documentId) {
       throw new Error(
         `Candidat #${index + 1}: documentId incohérent avec le document matérialisé`
