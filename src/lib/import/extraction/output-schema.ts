@@ -96,6 +96,9 @@ export const PROVENANCE_UNVERIFIED_WARNING =
 export const PROVENANCE_INVALID_PAGE_WARNING =
   "Page de provenance invalide ou absente du document : citation non vérifiable.";
 
+export const VISION_PROVENANCE_UNVERIFIED_WARNING =
+  "Provenance issue d'une analyse visuelle non corroborée par un texte local : vérification humaine requise.";
+
 // Comparaison insensible à la casse et aux espaces (une valeur « 2 500 » et un
 // document « 2500 » ne doivent pas produire de faux négatif).
 function normalizeForCitation(value: string): string {
@@ -162,4 +165,26 @@ export function verifyProvenanceAgainstPages(
 
     return degraded ? { ...candidate, fields } : candidate;
   });
+}
+
+export function markVisionProvenanceUnverified(
+  candidates: ExtractedCandidate[]
+): ExtractedCandidate[] {
+  return candidates.map((candidate) => ({
+    ...candidate,
+    page: null,
+    fields: Object.fromEntries(
+      Object.entries(candidate.fields).map(([field, provenance]) => [
+        field,
+        provenance
+          ? {
+              ...provenance,
+              confidence: "low" as const,
+              page: null,
+              warning: VISION_PROVENANCE_UNVERIFIED_WARNING,
+            }
+          : provenance,
+      ])
+    ),
+  }));
 }
