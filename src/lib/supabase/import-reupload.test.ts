@@ -5,8 +5,10 @@ const ORG = "11111111-1111-4111-8111-111111111111";
 const SESSION = "22222222-2222-4222-8222-222222222222";
 const DOC = "33333333-3333-4333-8333-333333333333";
 
-const state = vi.hoisted(() => ({
-  user: { id: USER } as { id: string } | null,
+const state = vi.hoisted(() => {
+  const user = "55555555-5555-4555-8555-555555555555";
+  return {
+  user: { id: user } as { id: string } | null,
   role: "owner" as string | null,
   updateError: null as string | null,
   storageError: null as string | null,
@@ -14,7 +16,8 @@ const state = vi.hoisted(() => ({
   storageObjects: [] as string[],
   storageLists: [] as Array<{ folder: string; search?: string }>,
   updates: [] as Array<Record<string, unknown>>,
-}));
+  };
+});
 
 function reset() {
   state.user = { id: USER };
