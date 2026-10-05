@@ -10,6 +10,19 @@ describe("resolveImportFileType", () => {
     });
   });
 
+  it("accepte un PNG quand le navigateur fournit le MIME alias image/x-png", () => {
+    expect(resolveImportFileType("photo.PNG", "image/x-png")).toEqual({
+      ok: true,
+      sourceKind: "image",
+      mimeType: "image/png",
+    });
+  });
+
+  it("refuse un MIME réellement incompatible avec une alerte exploitable", () => {
+    const result = resolveImportFileType("photo.png", "application/octet-stream");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Le fichier n a pas été envoyé");
+  });
   it("refuse un MIME incompatible même si l'extension semble valide", () => {
     const result = resolveImportFileType("catalogue.png", "application/pdf");
     expect(result.ok).toBe(false);
