@@ -103,86 +103,53 @@ export default function ImportPage(){
 
   async function filesSelected(files:FileList|null){
     if(!files||!data) return;
-
-    const selected=Array.from(files);
     setBusy("upload");setError("");setNotice("");setUploadErrors([]);
-
-    if(selected.length===0){
-      setBusy("");
-      return;
-    }
-
-    if(selected.length>5){
-      setBusy("");
-      setError("Vous pouvez importer jusqu'à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
-      if(input.current)input.current.value="";
-      return;
-    }
-
-    const results=await Promise.allSettled(
-      selected.map(async(file)=>{
+    try{
+      const selected=Array.from(files);
+      if(selected.length===0) return;
+      if(selected.length>5){
+        setError("Vous pouvez importer jusqu'à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
+        return;
+      }
+      const results=await Promise.allSettled(selected.map(async(file)=>{
         const resolved=resolveImportFileType(file.name,file.type);
         if(!resolved.ok) throw new Error(resolved.error);
-        const kind=resolved.sourceKind;
-        const mimeType=resolved.mimeType;
         if(file.size===0) throw new Error(file.name+": fichier vide");
         if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
-
         const made=await addImportDocument({
-          sessionId:data.session.id,
-          originalName:file.name,
-          sourceKind:kind,
-          mimeType,
-          sizeBytes:file.size
+          sessionId:data.session.id, originalName:file.name,
+          sourceKind:resolved.sourceKind, mimeType:resolved.mimeType, sizeBytes:file.size
         });
-
         try{
           await uploadImportDocument(file,made.storagePath);
           await markImportDocumentUploaded(made.document.id);
           return file.name;
         }catch(error){
           const message=error instanceof Error?error.message:"Erreur upload inconnue";
-          try{
-            await markImportDocumentUploadFailed(made.document.id,message);
-          }catch{
-            // Le document reste au minimum traçable si la transition d'échec
-            // elle-même ne peut pas être enregistrée.
-          }
+          try{await markImportDocumentUploadFailed(made.document.id,message);}catch{}
           throw new Error(message);
         }
-      })
-    );
+      }));
 
-    const succeeded=results.flatMap(result=>result.status==="fulfilled"?[result.value]:[]);
-    const failed=results.flatMap(result=>
-      result.status==="rejected"
-        ? [result.reason instanceof Error?result.reason.message:"Erreur upload inconnue"]
-        : []
-    );
+      const succeeded=results.flatMap(r=>r.status==="fulfilled"?[r.value]:[]);
+      const failed=results.flatMap(r=>r.status==="rejected"?[r.reason instanceof Error?r.reason.message:"Erreur upload inconnue"]:[]);
+      await refresh();
 
-    await refresh();
-
-    if(failed.length===0){
-      setNotice(
-        succeeded.length+" fichier"+(succeeded.length>1?"s":"")+
-        " ajouté"+(succeeded.length>1?"s":"")+". Vous pouvez traiter ce lot lorsque tous les fichiers sont en état « Prêt »."
-      );
-      setError("");
-    }else{
-      setUploadErrors(failed);
-      setError(
-        failed.length+" fichier"+(failed.length>1?"s":"")+
-        " n"+(failed.length>1?"'ont":"'a")+" pas pu être ajouté"+(failed.length>1?"s":"")+". Aucun échec n'a été masqué."
-      );
-      setNotice(
-        succeeded.length
-          ? succeeded.length+"/"+selected.length+" fichiers ajoutés."
-          : "Aucun fichier n'a été ajouté. Vérifiez les erreurs ci-dessous."
-      );
+      if(failed.length===0){
+        setNotice(succeeded.length+" fichier"+(succeeded.length>1?"s":"")+" ajouté"+(succeeded.length>1?"s":"")+". Vous pouvez maintenant traiter ce lot.");
+      }else{
+        setUploadErrors(failed);
+        setError(failed.length+" fichier"+(failed.length>1?"s":"")+" n ont pas pu être ajouté"+(failed.length>1?"s":"")+". Aucun échec n est masqué.");
+        setNotice(succeeded.length?succeeded.length+"/"+selected.length+" fichiers ajoutés.":"Aucun fichier n a été ajouté. Vérifiez les erreurs ci-dessous.");
+      }
+    }catch(error){
+      const message=error instanceof Error?error.message:"Erreur upload inconnue";
+      setError(message);
+      try{await refresh();}catch{}
+    }finally{
+      setBusy("");
+      if(input.current)input.current.value="";
     }
-
-    setBusy("");
-    if(input.current)input.current.value="";
   }
   async function process(){
     if(!data) return; setBusy("process");setError("");setNotice("");
@@ -318,8 +285,8 @@ export default function ImportPage(){
         {!data?<Button onClick={()=>void newSession()} disabled={!!busy}><FileUp className="w-4 h-4"/>{busy==="new"?"Création…":"Nouvel import"}</Button>:<Button variant="outline" size="sm" onClick={()=>{setData(null);setLoading(false);router.replace("/import")}} disabled={!!busy}>← Imports</Button>}
       </div>
     </div>
-    {(error||notice)&&<div role={error?"alert":"status"} className={error?"p-3 rounded-[10px] bg-error/10 text-error text-sm":"p-3 rounded-[10px] bg-success/10 text-success text-sm"}><span className="flex items-center gap-2"><AlertCircle className="w-4 h-4"/>{error||notice}</span></div>}
-    {uploadErrors.length>0&&<div role="alert" className="p-3 rounded-[10px] border border-error/20 bg-error/5 text-error text-sm">
+    {(error||notice)&&<div data-testid={error?"import-upload-error":undefined} role={error?"alert":"status"} className={error?"p-3 rounded-[10px] bg-error/10 text-error text-sm":"p-3 rounded-[10px] bg-success/10 text-success text-sm"}><span className="flex items-center gap-2"><AlertCircle className="w-4 h-4"/>{error||notice}</span></div>}
+    {uploadErrors.length>0&&<div data-testid="import-upload-error-details" role="alert" className="p-3 rounded-[10px] border border-error/20 bg-error/5 text-error text-sm">
       <p className="font-medium mb-1">Fichiers refusés ou échoués</p>
       <ul className="space-y-1">{uploadErrors.map((message,index)=><li key={index}>• {message}</li>)}</ul>
     </div>}

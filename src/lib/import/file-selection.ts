@@ -5,6 +5,12 @@ export type ImportFileResolution =
   | { ok: true; sourceKind: ImportSourceKind; mimeType: string }
   | { ok: false; error: string };
 
+const MIME_ALIASES: Record<string, string[]> = {
+  "image/png": ["image/x-png"],
+  "image/jpeg": ["image/pjpeg"],
+  "text/markdown": ["text/x-markdown"],
+};
+
 export function resolveImportFileType(
   originalName: string,
   browserMimeType: string
@@ -15,30 +21,30 @@ export function resolveImportFileType(
   if (!format) {
     return {
       ok: false,
-      error: `${originalName}: format non supporté (PDF, DOC, DOCX, MD, JPG, JPEG, PNG ou WEBP).`,
+      error: originalName + ": format non supporté (PDF, DOC, DOCX, MD, JPG, JPEG, PNG ou WEBP).",
     };
   }
 
   const browserMime = browserMimeType.split(";")[0].trim().toLowerCase();
-  const mimeType = browserMime || format.mimeTypes[0];
+  const acceptedBrowserMimes = new Set([
+    ...format.mimeTypes,
+    ...format.mimeTypes.flatMap((mime) => MIME_ALIASES[mime] ?? []),
+  ]);
+  const mimeType =
+    browserMime && acceptedBrowserMimes.has(browserMime)
+      ? format.mimeTypes[0]
+      : browserMime || format.mimeTypes[0];
 
-  if (browserMime && !(format.mimeTypes as readonly string[]).includes(browserMime)) {
+  if (browserMime && !acceptedBrowserMimes.has(browserMime)) {
     return {
       ok: false,
-      error: `${originalName}: type MIME incompatible (${browserMime}).`,
+      error: originalName + ": type MIME incompatible (" + browserMime + "). Le fichier n a pas été envoyé.",
     };
   }
 
   const sourceKind = format.sourceKinds[0];
   const issue = importFileIssue(originalName, mimeType, sourceKind);
+  if (issue) return { ok: false, error: originalName + ": " + issue };
 
-  if (issue) {
-    return { ok: false, error: `${originalName}: ${issue}` };
-  }
-
-  return {
-    ok: true,
-    sourceKind,
-    mimeType,
-  };
+  return { ok: true, sourceKind, mimeType };
 }

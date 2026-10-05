@@ -6,7 +6,7 @@ const GEMINI_INTERACTIONS_URL =
   "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 const DEFAULT_NOVA_GEMINI_MODEL = "gemini-3.6-flash";
-export const NOVA_GEMINI_FALLBACK_MODELS = ["gemini-3.5-flash"] as const;
+export const NOVA_GEMINI_FALLBACK_MODELS = ["gemini-3.7-flash", "gemini-3.5-flash"] as const;
 const MAX_TRANSIENT_RETRIES = 2;
 const RETRY_DELAY_MS = [700, 1400] as const;
 
@@ -38,6 +38,10 @@ export interface GeminiInteraction {
     name?: string;
     id?: string;
     arguments?: unknown;
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
   }>;
 }
 
@@ -203,6 +207,23 @@ export async function createGeminiInteractionWithFallback(input: {
   throw lastError instanceof Error
     ? lastError
     : new Error("Gemini indisponible"); 
+}
+
+export function getInteractionOutputText(
+  interaction: GeminiInteraction
+): string {
+  if (interaction.output_text?.trim()) {
+    return interaction.output_text.trim();
+  }
+
+  const texts = (interaction.steps ?? [])
+    .filter((step) => step.type === "model_output" || step.type === "text")
+    .flatMap((step) => step.content ?? [])
+    .filter((content) => content.type === "text" && typeof content.text === "string")
+    .map((content) => content.text!.trim())
+    .filter(Boolean);
+
+  return texts.join("\n\n").trim();
 }
 
 export function getFunctionCalls(
