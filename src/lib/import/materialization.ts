@@ -1,4 +1,5 @@
 import { importItemInputSchema } from "./schemas";
+import { exactImportDedupFingerprint } from "./matching";
 import type { ExtractedCandidate } from "./extraction/types";
 import type { ImportEntityType, ImportFieldProvenance } from "./types";
 
@@ -24,7 +25,45 @@ export function prepareImportItemsForMaterialization(
     );
   }
 
-  return candidates.map((candidate, index) => {
+  const seen = new Map<string, number>();
+  const uniqueCandidates: ExtractedCandidate[] = [];
+
+  for (const candidate of candidates) {
+    const fingerprint = exactImportDedupFingerprint(
+      candidate.entityType,
+      candidate.fields
+    );
+    const existingIndex = seen.get(fingerprint);
+
+    if (existingIndex === undefined) {
+      seen.set(fingerprint, uniqueCandidates.length);
+      uniqueCandidates.push(candidate);
+      continue;
+    }
+
+    const existing = uniqueCandidates[existingIndex];
+    if (existing?.fields.name) {
+      const duplicatePage = candidate.page;
+      const message = duplicatePage
+        ? `Doublon exact détecté : occurrence supplémentaire ignorée (page ${duplicatePage}).`
+        : "Doublon exact détecté : occurrence supplémentaire ignorée.";
+      const previousWarning = existing.fields.name.warning;
+      uniqueCandidates[existingIndex] = {
+        ...existing,
+        fields: {
+          ...existing.fields,
+          name: {
+            ...existing.fields.name,
+            warning: previousWarning
+              ? `${previousWarning} ${message}`
+              : message,
+          },
+        },
+      };
+    }
+  }
+
+  return uniqueCandidates.map((candidate, index) => {
     if (candidate.documentId !== documentId) {
       throw new Error(
         `Candidat #${index + 1}: documentId incohérent avec le document matérialisé`

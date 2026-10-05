@@ -29,7 +29,11 @@ import {
   type ExtractedDocument,
 } from "@/lib/import/extraction";
 import type { z } from "zod";
-import { proposeImportItemMatch, type ExistingImportEntity } from "@/lib/import/matching";
+import {
+  findExactImportDuplicateGroups,
+  proposeImportItemMatch,
+  type ExistingImportEntity,
+} from "@/lib/import/matching";
 
 type AddImportDocumentInput = z.infer<typeof addImportDocumentSchema>;
 
@@ -1020,7 +1024,53 @@ export async function matchImportSession(
     throw new Error(`Erreur lecture items à rapprocher: ${itemsError.message}`);
   }
 
-  const items = (rows ?? []) as DatabaseImportItem[];
+  let items = (rows ?? []) as DatabaseImportItem[];
+
+  const duplicateGroups = findExactImportDuplicateGroups(
+    items.map((item) => ({
+      id: item.id,
+      entityType: item.entity_type,
+      fields: item.fields,
+      createdAt: item.created_at,
+    }))
+  );
+
+  if (duplicateGroups.length > 0) {
+    const duplicateIds = duplicateGroups.flatMap((group) => group.duplicateIds);
+    const { error: dedupError } = await supabase
+      .from("import_items")
+      .update({
+        action: "ignore",
+        status: "ignored",
+        match: null,
+        error_message: "Doublon exact détecté : l’item de référence est conservé en revue.",
+        updated_at: new Date().toISOString(),
+      })
+      .eq("session_id", session.id)
+      .eq("organization_id", session.organization_id)
+      .in("id", duplicateIds)
+      .eq("status", "pending");
+
+    if (dedupError) {
+      throw new Error(
+        `Erreur déduplication déterministe des items d'import: ${dedupError.message}`
+      );
+    }
+
+    items = items.filter((item) => !duplicateIds.includes(item.id));
+
+    if (items.length === 0) {
+      const { data: existing, error } = await supabase
+        .from("import_items")
+        .select("*")
+        .eq("session_id", session.id)
+        .eq("organization_id", session.organization_id)
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(`Erreur lecture items après déduplication: ${error.message}`);
+      return (existing ?? []) as DatabaseImportItem[];
+    }
+  }
+
   if (items.length === 0) {
     const { data: existing, error } = await supabase
       .from("import_items")
