@@ -171,9 +171,7 @@ function buildFontMaps(
       cmapCache.set(toUnicodeRef, parsed);
     }
 
-    if (parsed && parsed.size > 0) {
-      fonts.set(match[1], parsed);
-    }
+    if (parsed && parsed.size > 0) fonts.set(match[1], parsed);
   }
 
   return fonts;
@@ -218,9 +216,7 @@ function currentFontBefore(content: string, position: number): string | null {
   let match: RegExpExecArray | null = null;
   let current: RegExpExecArray | null;
 
-  while ((current = fontRe.exec(prefix)) !== null) {
-    match = current;
-  }
+  while ((current = fontRe.exec(prefix)) !== null) match = current;
 
   return match?.[1] ?? null;
 }
@@ -228,24 +224,27 @@ function currentFontBefore(content: string, position: number): string | null {
 function decodeTextOperators(content: string, fonts: FontMap): string {
   const fragments: string[] = [];
 
-  const directRe = /(\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>)\s*Tj/g;
-  let direct: RegExpExecArray | null;
-  while ((direct = directRe.exec(content)) !== null) {
-    const token = direct[1];
-    const font = currentFontBefore(content, direct.index);
+  // Tj et TJ sont parcourus dans leur ordre réel dans le flux : cela évite
+  // de réordonner les nombres et le texte quand un PDF mélange les deux
+  // formes d'opérateur.
+  const operatorRe =
+    /(\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>)\s*Tj|\[([\s\S]*?)\]\s*TJ/g;
 
-    fragments.push(
-      token.startsWith("(")
-        ? decodePdfString(token.slice(1, -1))
-        : decodeHexString(token.slice(1, -1), fonts, font)
-    );
-  }
+  let operator: RegExpExecArray | null;
+  while ((operator = operatorRe.exec(content)) !== null) {
+    const font = currentFontBefore(content, operator.index);
 
-  const arrayRe = /\[([\s\S]*?)\]\s*TJ/g;
-  let array: RegExpExecArray | null;
-  while ((array = arrayRe.exec(content)) !== null) {
-    const font = currentFontBefore(content, array.index);
-    const inner = array[1];
+    if (operator[1] !== undefined) {
+      const token = operator[1];
+      fragments.push(
+        token.startsWith("(")
+          ? decodePdfString(token.slice(1, -1))
+          : decodeHexString(token.slice(1, -1), fonts, font)
+      );
+      continue;
+    }
+
+    const inner = operator[3] ?? "";
     const tokenRe = /\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>/g;
     let token: RegExpExecArray | null;
     let operatorText = "";
@@ -295,7 +294,6 @@ export function extractPdfPages(
   );
   const pages: ExtractedPage[] = [];
   const cmapCache = new Map<number, ToUnicodeMap | null>();
-
   let budgetExceeded = false;
 
   pageObjects.forEach((pageObject, index) => {
@@ -328,8 +326,6 @@ export function extractPdfPages(
     }
   });
 
-  // Fallback de compatibilité pour les PDF atypiques sans contenu rattaché à
-  // /Type /Page. Toujours borné par le budget de décompression.
   if (!budgetExceeded && pages.length === 0) {
     const fallbackParts: string[] = [];
 
