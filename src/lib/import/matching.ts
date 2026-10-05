@@ -15,7 +15,7 @@ export interface ImportCandidateForMatching {
 export interface ImportItemForDedup {
   id: string;
   entityType: ImportEntityType;
-  fields: Record<string, { raw: string; normalized?: string | number | null }>;
+  fields: Partial<Record<string, { raw: string; normalized?: string | number | null }>>;
   createdAt?: string | null;
 }
 
@@ -49,7 +49,7 @@ function canonicalDedupScalar(
 
 export function exactImportDedupFingerprint(
   entityType: ImportEntityType,
-  fields: Record<string, { raw: string; normalized?: string | number | null }>
+  fields: Partial<Record<string, { raw: string; normalized?: string | number | null }>>
 ): string {
   return JSON.stringify([
     entityType,
