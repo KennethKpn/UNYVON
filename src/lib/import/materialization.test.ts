@@ -126,4 +126,38 @@ describe("prepareImportItemsForMaterialization", () => {
       )
     ).toThrow("maximum 500");
   });
+
+  it("élimine les candidats strictement identiques avant matérialisation", () => {
+    const first = candidate({ page: 2 });
+    const duplicate = candidate({ page: 7 });
+    const result = prepareImportItemsForMaterialization(
+      [first, duplicate],
+      SESSION,
+      DOC
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]?.source_page).toBe(2);
+  });
+
+  it("conserve deux candidats portant le même nom mais des données différentes", () => {
+    const first = candidate();
+    const second = candidate({
+      fields: {
+        ...first.fields,
+        sale_price: {
+          raw: "18 600 FCFA",
+          normalized: 18600,
+          confidence: "high",
+          warning: null,
+          page: 2,
+        },
+      },
+    });
+
+    expect(
+      prepareImportItemsForMaterialization([first, second], SESSION, DOC)
+    ).toHaveLength(2);
+  });
+
 });
