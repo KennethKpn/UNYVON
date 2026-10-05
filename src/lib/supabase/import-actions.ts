@@ -674,12 +674,17 @@ export async function materializeImportDocument(
   // Un échec fournisseur/réponse du modèle est récupérable : le document reste
   // parsed et peut être repris sans être re-uploadé. Les échecs de lecture ou
   // de format restent terminalement failed.
-  const providerFailure = extracted.errors.some(
-    (error) => error.code === "PROVIDER_ERROR" || error.code === "NO_PROVIDER"
-  );
+  const retryableExtractionFailure =
+    extracted.status === "PARTIAL" ||
+    extracted.errors.some(
+      (error) =>
+        error.code === "PROVIDER_ERROR" ||
+        error.code === "NO_PROVIDER" ||
+        error.code === "INVALID_OUTPUT"
+    );
 
   if (extracted.status !== "SUCCESS") {
-    const targetState = providerFailure ? "parsed" : "failed";
+    const targetState = retryableExtractionFailure ? "parsed" : "failed";
     const { error: persistError } = await supabase
       .from("import_documents")
       .update({
