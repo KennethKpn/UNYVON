@@ -438,7 +438,7 @@ describe("robustesse fournisseur", () => {
     const longDoc = "mot ".repeat(30000);
     const doc = await run("md", enc(longDoc), fakeProvider(VALID_OUTPUT));
     expect(doc.status).toBe("SUCCESS");
-    expect(doc.warnings.some((w) => w.code === "TEXT_TRUNCATED")).toBe(true);
+    expect(doc.warnings.some((w) => w.code === "TEXT_CHUNKED")).toBe(true);
   });
 
   it("fichier > 25 Mo refusé avant toute extraction", async () => {
