@@ -25,12 +25,15 @@ export function prepareImportItemsForMaterialization(
     );
   }
 
-  const uniqueCandidates = candidates.filter((candidate, index) => {
-    const fingerprint = exactImportDedupFingerprint(candidate.entityType, candidate.fields);
-    return candidates.findIndex(
-      (other) =>
-        exactImportDedupFingerprint(other.entityType, other.fields) === fingerprint
-    ) === index;
+  const seen = new Set<string>();
+  const uniqueCandidates = candidates.filter((candidate) => {
+    const fingerprint = exactImportDedupFingerprint(
+      candidate.entityType,
+      candidate.fields
+    );
+    if (seen.has(fingerprint)) return false;
+    seen.add(fingerprint);
+    return true;
   });
 
   return uniqueCandidates.map((candidate, index) => {
