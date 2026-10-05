@@ -68,12 +68,24 @@ export interface ExactImportDuplicateGroup {
   fingerprint: string;
 }
 
+function hasSafeEntityDedupIdentity(item: ImportItemForDedup): boolean {
+  if (item.entityType === "customer" || item.entityType === "supplier") {
+    const phone = item.fields.phone?.normalized ?? item.fields.phone?.raw;
+    const email = item.fields.email?.normalized ?? item.fields.email?.raw;
+    return String(phone ?? "").replace(/\D/g, "").length > 0 ||
+      String(email ?? "").trim().length > 0;
+  }
+
+  return true;
+}
+
 export function findExactImportDuplicateGroups(
   items: ImportItemForDedup[]
 ): ExactImportDuplicateGroup[] {
   const grouped = new Map<string, ImportItemForDedup[]>();
 
   for (const item of items) {
+    if (!hasSafeEntityDedupIdentity(item)) continue;
     const fingerprint = exactImportDedupFingerprint(item.entityType, item.fields);
     const group = grouped.get(fingerprint) ?? [];
     group.push(item);
