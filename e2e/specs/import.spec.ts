@@ -75,7 +75,8 @@ test.describe("smart import — upload guidé", () => {
 
 
 test.describe("smart import — lots multi-fichiers", () => {
-  test("accepte et affiche jusqu'à 5 fichiers dans le même lot", async ({ page }) => {
+  test("accepte et affiche jusqu'à 5 fichiers dans le même lot", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "vp-390x844", "Le batch multi-fichiers est validé sur un seul viewport pour éviter de multiplier les uploads réels.");
     await page.goto("/import");
     await page.getByRole("button", { name: "Nouvel import" }).click();
     await page.waitForURL(/\/import\?session=[0-9a-f-]{36}$/);
@@ -104,7 +105,8 @@ test.describe("smart import — lots multi-fichiers", () => {
     await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
   });
 
-  test("signale clairement un lot de plus de 5 fichiers", async ({ page }) => {
+  test("signale clairement un lot de plus de 5 fichiers", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "vp-390x844", "Le garde-fou de taille de lot ne nécessite qu'un viewport.");
     await page.goto("/import");
     await page.getByRole("button", { name: "Nouvel import" }).click();
     await page.waitForURL(/\/import\?session=[0-9a-f-]{36}$/);
