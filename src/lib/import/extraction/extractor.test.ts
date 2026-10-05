@@ -248,6 +248,43 @@ describe("artefact de parsing durable", () => {
 // 5. Format interdit
 // ---------------------------------------------------------------------------
 
+describe("signature binaire", () => {
+  it("refuse un PDF dont la signature ne correspond pas au format annoncé", async () => {
+    const doc = await run("pdf", enc("ceci est du texte, pas un PDF"));
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("INVALID_FILE_SIGNATURE");
+  });
+
+  it("refuse une image PNG usurpée avec un contenu arbitraire", async () => {
+    const doc = await run("image", enc("not a png"), null, "photo.png");
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]?.code).toBe("INVALID_FILE_SIGNATURE");
+  });
+
+  it("accepte les signatures natives des formats binaires V1", async () => {
+    const pdf = await run("pdf", enc("%PDF-1.7\n"), null);
+    expect(pdf.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+
+    const docx = await run("docx", new Uint8Array([0x50, 0x4b, 0x03, 0x04]), null);
+    expect(docx.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+
+    const doc = await run(
+      "doc",
+      new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+      null
+    );
+    expect(doc.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+
+    const png = await run(
+      "image",
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+      null,
+      "photo.png"
+    );
+    expect(png.errors[0]?.code).not.toBe("INVALID_FILE_SIGNATURE");
+  });
+});
+
 describe("format interdit", () => {
   it("refuse proprement un format hors V1 sans appel fournisseur", async () => {
     let providerCalled = false;
