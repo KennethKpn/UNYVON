@@ -13,7 +13,7 @@ import {
   updateImportItemFields,
   materializeImportDocument, matchImportSession, startImportProcessing, getImportSessions,
 } from "@/lib/supabase/import-actions";
-import { getImportReviewData, retryImportDocument, type ImportReviewData } from "@/lib/supabase/import-review-actions";
+import { getImportReviewData, prepareImportDocumentReupload, retryImportDocument, type ImportReviewData } from "@/lib/supabase/import-review-actions";
 import { uploadImportDocument } from "@/lib/import/storage-client";
 import { resolveImportFileType } from "@/lib/import/file-selection";
 import { processImportDocumentBatch } from "@/lib/import/batch-processing";
@@ -234,6 +234,34 @@ export default function ImportPage(){
   async function retry(id:string){setBusy(`r:${id}`);setError("");
     try{await retryImportDocument(id);await refresh();setNotice("Document remis en attente de traitement.");}
     catch(e){setError(e instanceof Error?e.message:"Relance impossible");}finally{setBusy("")}
+  }
+
+  async function reupload(id:string,file:File){
+    setBusy(`u:${id}`);setError("");setNotice("");
+    try{
+      const resolved=resolveImportFileType(file.name,file.type);
+      if(!resolved.ok) throw new Error(resolved.error);
+      if(file.size===0) throw new Error(file.name+": fichier vide");
+      if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
+      const prepared=await prepareImportDocumentReupload({
+        documentId:id,
+        originalName:file.name,
+        sourceKind:resolved.sourceKind,
+        mimeType:resolved.mimeType,
+        sizeBytes:file.size,
+      });
+      try{
+        await uploadImportDocument(file,prepared.storagePath);
+        await markImportDocumentUploaded(prepared.document.id);
+      }catch(error){
+        const message=error instanceof Error?error.message:"Erreur upload inconnue";
+        try{await markImportDocumentUploadFailed(prepared.document.id,message);}catch{}
+        throw new Error(message);
+      }
+      await refresh();
+      setNotice("Document réuploadé et remis en attente de traitement.");
+    }catch(e){setError(e instanceof Error?e.message:"Réupload impossible");await refresh();}
+    finally{setBusy("")}
   }
 
   const beginEdit=(item:DatabaseImportItem)=>{
