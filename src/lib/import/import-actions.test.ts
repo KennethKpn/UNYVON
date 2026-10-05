@@ -39,6 +39,9 @@ const h = vi.hoisted(() => {
     listError: null as string | null,
     // Chemins d'objets réellement présents dans le bucket. Vide = aucun objet.
     storageObjects: [] as string[],
+    downloadBytes: new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]),
+    extractionQueue: [] as Array<unknown>,
+    rpcMaterializeError: null as string | null,
   };
 
   const TABLES: Record<string, Row[]> = {
@@ -75,6 +78,9 @@ const h = vi.hoisted(() => {
     db.removeError = null;
     db.listError = null;
     db.storageObjects = [];
+    db.downloadBytes = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]);
+    db.extractionQueue = [];
+    db.rpcMaterializeError = null;
     rpcCalls.length = 0;
     storageCalls.length = 0;
     storageListCalls.length = 0;
@@ -233,6 +239,24 @@ const h = vi.hoisted(() => {
       if (fn === "current_org_role") {
         return { data: orgId ? (db.roles[orgId] ?? null) : null, error: null };
       }
+      if (fn === "materialize_import_document") {
+        if (db.rpcMaterializeError) {
+          return { data: null, error: { message: db.rpcMaterializeError } };
+        }
+        const documentId = (args as { p_document_id: string }).p_document_id;
+        const document = db.documents.find((row) => row.id === documentId);
+        if (document) {
+          document.state = "extracted";
+          document.page_count = (args as { p_page_count: number }).p_page_count;
+          document.error_message = null;
+          document.processed_at = "2026-10-05T00:00:00+00:00";
+        }
+        const session = db.sessions.find((row) => row.id === document?.session_id);
+        if (session && document && db.documents.every((row) => row.session_id !== session.id || row.state === "extracted")) {
+          session.state = "needs_review";
+        }
+        return { data: db.items, error: null };
+      }
       return { data: null, error: null };
     },
     from: (table: string) => builder(table),
@@ -250,6 +274,10 @@ const h = vi.hoisted(() => {
         },
         // list(folder, { search }) : ne renvoie que les fichiers du dossier,
         // `id` non nul. Reproduit le filtrage exact + préfixe de `search`.
+        download: async (_path: string) => ({
+          data: new Blob([db.downloadBytes]),
+          error: null,
+        }),
         list: async (folder: string, opts?: { search?: string }) => {
           storageListCalls.push({
             bucket,
@@ -299,6 +327,28 @@ vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => h.client,
 }));
 
+vi.mock("@/lib/import/extraction", () => ({
+  createDefaultProvider: () => null,
+  createDocumentExtractor: () => ({
+    extract: async () => {
+      const next = h.db.extractionQueue.shift();
+      if (!next) {
+        return {
+          status: "SUCCESS",
+          documentId: h.DOC,
+          sourceKind: "pdf",
+          source: "pdf-local",
+          pages: [{ page: 1, text: "Produit Test" }],
+          candidates: [],
+          warnings: [],
+          errors: [],
+        };
+      }
+      return next;
+    },
+  }),
+}));
+
 import {
   addImportDocument,
   cancelImportSession,
@@ -312,6 +362,7 @@ import {
   getImportSessions,
   markImportDocumentUploaded,
   markImportDocumentUploadFailed,
+  materializeImportDocument,
   startImportProcessing,
 } from "../supabase/import-actions";
 
@@ -830,6 +881,104 @@ describe("startImportProcessing — lots partiellement en échec", () => {
       "Aucun document prêt à traiter"
     );
     expect(h.db.sessions[0].state).toBe("collecting");
+  });
+});
+
+describe("materializeImportDocument — state machine resumable", () => {
+  const success = {
+    status: "SUCCESS",
+    documentId: h.DOC,
+    sourceKind: "pdf",
+    source: "pdf-local",
+    pages: [{ page: 1, text: "Produit Test" }],
+    candidates: [],
+    warnings: [],
+    errors: [],
+  };
+
+  const providerPartial = {
+    status: "PARTIAL",
+    documentId: h.DOC,
+    sourceKind: "pdf",
+    source: "pdf-local",
+    pages: [
+      { page: 1, text: "Produit Test" },
+      { page: 2, text: "Client Test" },
+    ],
+    candidates: [],
+    warnings: [],
+    errors: [{ code: "PROVIDER_ERROR", message: "Gemini 503" }],
+  };
+
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [h.documentRow({ state: "uploaded" })];
+  });
+
+  it("claim uploaded → parsing : une panne IA laisse le document en parsed et rejouable", async () => {
+    h.db.extractionQueue = [providerPartial];
+
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
+      "Gemini 503"
+    );
+
+    expect(h.db.documents[0].state).toBe("parsed");
+    expect(h.db.documents[0].page_count).toBe(2);
+    expect(h.db.documents[0].error_message).toContain("Gemini 503");
+    expect(h.rpcCalls.find((call) => call.fn === "materialize_import_document")).toBeUndefined();
+  });
+
+  it("parsed → extracting → extracted : une reprise réussie passe la frontière RPC", async () => {
+    h.db.documents = [h.documentRow({ state: "parsed" })];
+    h.db.extractionQueue = [success];
+
+    const items = await materializeImportDocument(h.DOC);
+
+    expect(items).toEqual([]);
+    expect(h.db.documents[0].state).toBe("extracted");
+    expect(h.rpcCalls.at(-1)?.fn).toBe("materialize_import_document");
+  });
+
+  it("deux appels concurrents simulés : le document déjà parsing est refusé avant le fournisseur", async () => {
+    h.db.documents = [h.documentRow({ state: "parsing" })];
+    h.db.extractionQueue = [success];
+
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
+      "Extraction déjà en cours"
+    );
+
+    expect(h.db.extractionQueue).toHaveLength(1);
+  });
+
+  it("échec SQL après extraction : le claim est libéré vers parsed au lieu de laisser extracting bloqué", async () => {
+    h.db.rpcMaterializeError = "RPC indisponible";
+    h.db.extractionQueue = [success];
+
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
+      "RPC indisponible"
+    );
+
+    expect(h.db.documents[0].state).toBe("parsed");
+    expect(h.db.documents[0].page_count).toBe(1);
+  });
+
+  it("une panne de lecture non-fournisseur reste failed", async () => {
+    h.db.extractionQueue = [{
+      status: "FAILED",
+      documentId: h.DOC,
+      sourceKind: "pdf",
+      source: "pdf-local",
+      pages: [],
+      candidates: [],
+      warnings: [],
+      errors: [{ code: "UNREADABLE_DOCUMENT", message: "Document illisible" }],
+    }];
+
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
+      "Document illisible"
+    );
+
+    expect(h.db.documents[0].state).toBe("failed");
   });
 });
 
