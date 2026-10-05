@@ -26,7 +26,7 @@ function syntheticHexPdf(): Uint8Array {
   const pdf = [
     "%PDF-1.4",
     "1 0 obj",
-    "<</Type /Page /Resources 2 0 R /Contents 3 0 R>>",
+    "<</Type/Page/Resources 2 0 R/Contents 3 0 R>>",
     "endobj",
     "2 0 obj",
     "<</Font 4 0 R>>",
@@ -41,7 +41,7 @@ function syntheticHexPdf(): Uint8Array {
     "<</F1 5 0 R>>",
     "endobj",
     "5 0 obj",
-    "<</Type /Font /ToUnicode 6 0 R>>",
+    "<</Type/Font/ToUnicode 6 0 R>>",
     "endobj",
     "6 0 obj",
     `<</Length ${cmap.length}>>`,
