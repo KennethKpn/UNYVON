@@ -52,8 +52,16 @@ export type LocalParseResult =
       pages: ExtractedPage[];
     };
 
-// Limite raisonnable de texte transmis au fournisseur (protection coût V1).
-const MAX_PROVIDER_TEXT_CHARS = 50_000;
+// Taille maximale d'un appel de structuration texte. On travaille par
+// morceaux afin de ne jamais ignorer silencieusement la fin d'un document.
+export const MAX_PROVIDER_TEXT_CHARS = 50_000;
+// Borne de coût par document. Au-delà, le pipeline refuse explicitement le
+// document au lieu de prétendre avoir traité l'ensemble de son contenu.
+export const MAX_PROVIDER_TOTAL_CHARS = MAX_PROVIDER_TEXT_CHARS * 50;
+// Petit recouvrement pour éviter de couper une ligne/une entité exactement à
+// la frontière d'un chunk. Les doublons éventuels seront conservés pour la
+// revue plutôt que fusionnés silencieusement.
+const PROVIDER_CHUNK_OVERLAP_CHARS = 1_000;
 
 const UNSUPPORTED_MESSAGE =
   "Format de fichier non supporté (V1 : PDF, DOC, DOCX, MD, JPG, JPEG, PNG, WEBP)";
@@ -75,19 +83,86 @@ function escapeForgedPageMarkers(text: string): string {
   return text.replace(/\[(?=Page\s+\d+\])/g, "\\[");
 }
 
-function composeProviderText(
-  pages: ExtractedDocument["pages"],
+function composeProviderPageText(page: ExtractedPage): string {
+  return `[Page ${page.page}]\\n${escapeForgedPageMarkers(page.text)}`;
+}
+
+export function composeProviderTextChunks(
+  pages: ExtractedPage[],
   warnings: ExtractionWarning[]
-): string {
-  const full = pages
-    .map((page) => `[Page ${page.page}]\n${escapeForgedPageMarkers(page.text)}`)
-    .join("\n\n");
-  if (full.length <= MAX_PROVIDER_TEXT_CHARS) return full;
-  warnings.push({
-    code: "TEXT_TRUNCATED",
-    message: `Texte tronqué à ${MAX_PROVIDER_TEXT_CHARS} caractères pour le fournisseur IA`,
-  });
-  return full.slice(0, MAX_PROVIDER_TEXT_CHARS);
+): string[] {
+  const pageTexts = pages.map(composeProviderPageText);
+  const fullLength = pageTexts.reduce(
+    (total, pageText, index) => total + pageText.length + (index > 0 ? 2 : 0),
+    0
+  );
+
+  if (fullLength > MAX_PROVIDER_TOTAL_CHARS) {
+    warnings.push({
+      code: "TEXT_TOO_LARGE_FOR_PROVIDER",
+      message:
+        `Texte de document trop volumineux pour la structuration IA : ${fullLength.toLocaleString(
+          "fr-FR"
+        )} caractères, maximum ${MAX_PROVIDER_TOTAL_CHARS.toLocaleString("fr-FR")}.`,
+    });
+    return [];
+  }
+
+  const chunks: string[] = [];
+  let current = "";
+
+  const pushCurrent = () => {
+    if (current) {
+      chunks.push(current);
+      current = "";
+    }
+  };
+
+  for (const pageText of pageTexts) {
+    // Cas normal : garder une page entière ensemble quand elle tient dans un
+    // chunk. Cela maximise la cohérence des tables et des champs.
+    if (pageText.length <= MAX_PROVIDER_TEXT_CHARS) {
+      if (!current) {
+        current = pageText;
+        continue;
+      }
+
+      const candidate = `${current}\\n\\n${pageText}`;
+      if (candidate.length <= MAX_PROVIDER_TEXT_CHARS) {
+        current = candidate;
+      } else {
+        pushCurrent();
+        current = pageText;
+      }
+      continue;
+    }
+
+    // Page exceptionnellement longue : découpage déterministe avec overlap.
+    pushCurrent();
+
+    let start = 0;
+    while (start < pageText.length) {
+      const end = Math.min(
+        pageText.length,
+        start + MAX_PROVIDER_TEXT_CHARS
+      );
+      chunks.push(pageText.slice(start, end));
+      if (end === pageText.length) break;
+      start = Math.max(0, end - PROVIDER_CHUNK_OVERLAP_CHARS);
+    }
+  }
+
+  pushCurrent();
+  return chunks;
+}
+
+function mergeChunkCandidates(
+  candidates: ExtractedDocument["candidates"]
+): ExtractedDocument["candidates"] {
+  // Aucun dedup agressif ici : deux occurrences peuvent représenter des
+  // informations commerciales différentes. La fusion déterministe des lignes
+  // identiques/complémentaires fera partie de la phase matching/review.
+  return candidates;
 }
 
 function buildFailed(
@@ -333,33 +408,61 @@ export async function structureParsedDocument(
     return fail("UNREADABLE_DOCUMENT", "Document illisible : aucun texte extrait");
   }
 
-  const providerText = composeProviderText(document.pages, document.warnings);
-  let raw: unknown;
-  try {
-    raw = await provider.parse({ kind: "text", text: providerText });
-  } catch (error) {
-    document.errors.push({
-      code: "PROVIDER_ERROR",
-      message: (error as Error).message,
-    });
-    document.status = "PARTIAL";
-    return document;
-  }
-
-  const validated = validateLlmOutput(raw, input.documentId);
-  if (!validated.ok) {
-    document.warnings.push({
-      code: "INVALID_OUTPUT",
-      message: `Sortie modèle refusée : ${validated.issues.join("; ")}`,
-    });
-    document.status = "PARTIAL";
-    return document;
-  }
-
-  document.candidates = verifyProvenanceAgainstPages(
-    validated.candidates,
-    document.pages
+  const providerChunks = composeProviderTextChunks(
+    document.pages,
+    document.warnings
   );
+  if (providerChunks.length === 0) {
+    const tooLarge = document.warnings.some(
+      (warning) => warning.code === "TEXT_TOO_LARGE_FOR_PROVIDER"
+    );
+    if (tooLarge) {
+      document.errors.push({
+        code: "TEXT_TOO_LARGE_FOR_PROVIDER",
+        message:
+          "Document lisible mais trop volumineux pour être structuré par le fournisseur IA en une seule passe contrôlée.",
+      });
+    }
+    document.status = "PARTIAL";
+    return document;
+  }
+
+  const allCandidates: ExtractedDocument["candidates"] = [];
+  for (let index = 0; index < providerChunks.length; index += 1) {
+    let raw: unknown;
+    try {
+      raw = await provider.parse({
+        kind: "text",
+        text: providerChunks[index],
+      });
+    } catch (error) {
+      document.errors.push({
+        code: "PROVIDER_ERROR",
+        message: `Chunk ${index + 1}/${providerChunks.length}: ${(error as Error).message}`,
+      });
+      document.status = "PARTIAL";
+      return document;
+    }
+
+    const validated = validateLlmOutput(raw, input.documentId);
+    if (!validated.ok) {
+      document.warnings.push({
+        code: "INVALID_OUTPUT",
+        message: `Sortie modèle refusée sur le chunk ${index + 1}/${providerChunks.length} : ${validated.issues.join("; ")}`,
+      });
+      document.status = "PARTIAL";
+      return document;
+    }
+
+    allCandidates.push(
+      ...verifyProvenanceAgainstPages(
+        validated.candidates,
+        document.pages
+      )
+    );
+  }
+
+  document.candidates = mergeChunkCandidates(allCandidates);
   document.status = "SUCCESS";
   return document;
 }
