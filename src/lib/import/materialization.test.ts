@@ -138,6 +138,7 @@ describe("prepareImportItemsForMaterialization", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]?.source_page).toBe(2);
+    expect(result[0]?.fields.name?.warning).toContain("page 7");
   });
 
   it("conserve deux candidats portant le même nom mais des données différentes", () => {
