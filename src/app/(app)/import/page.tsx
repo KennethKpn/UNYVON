@@ -111,28 +111,35 @@ export default function ImportPage(){
         setError("Vous pouvez importer jusqu'à 5 fichiers par lot. Pour une plus grande quantité, envoyez plusieurs lots.");
         return;
       }
-      const results=await Promise.allSettled(selected.map(async(file)=>{
-        const resolved=resolveImportFileType(file.name,file.type);
-        if(!resolved.ok) throw new Error(resolved.error);
-        if(file.size===0) throw new Error(file.name+": fichier vide");
-        if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
-        const made=await addImportDocument({
-          sessionId:data.session.id, originalName:file.name,
-          sourceKind:resolved.sourceKind, mimeType:resolved.mimeType, sizeBytes:file.size
-        });
+      // Les uploads d'un même lot restent séquentiels côté orchestration.
+      // Storage + transition serveur doivent être confirmés pour chaque fichier
+      // avant d'ouvrir le suivant : cela évite les courses entre vérifications
+      // d'objet Storage/RLS lors de 5 uploads simultanés.
+      const succeeded:string[]=[];
+      const failed:string[]=[];
+      for(const file of selected){
         try{
-          await uploadImportDocument(file,made.storagePath);
-          await markImportDocumentUploaded(made.document.id);
-          return file.name;
+          const resolved=resolveImportFileType(file.name,file.type);
+          if(!resolved.ok) throw new Error(resolved.error);
+          if(file.size===0) throw new Error(file.name+": fichier vide");
+          if(file.size>IMPORT_MAX_FILE_BYTES) throw new Error(file.name+": 25 Mo maximum");
+          const made=await addImportDocument({
+            sessionId:data.session.id, originalName:file.name,
+            sourceKind:resolved.sourceKind, mimeType:resolved.mimeType, sizeBytes:file.size
+          });
+          try{
+            await uploadImportDocument(file,made.storagePath);
+            await markImportDocumentUploaded(made.document.id);
+            succeeded.push(file.name);
+          }catch(error){
+            const message=error instanceof Error?error.message:"Erreur upload inconnue";
+            try{await markImportDocumentUploadFailed(made.document.id,message);}catch{}
+            throw new Error(message);
+          }
         }catch(error){
-          const message=error instanceof Error?error.message:"Erreur upload inconnue";
-          try{await markImportDocumentUploadFailed(made.document.id,message);}catch{}
-          throw new Error(message);
+          failed.push(error instanceof Error?error.message:"Erreur upload inconnue");
         }
-      }));
-
-      const succeeded=results.flatMap(r=>r.status==="fulfilled"?[r.value]:[]);
-      const failed=results.flatMap(r=>r.status==="rejected"?[r.reason instanceof Error?r.reason.message:"Erreur upload inconnue"]:[]);
+      }
       await refresh();
 
       if(failed.length===0){
