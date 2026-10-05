@@ -380,6 +380,21 @@ async function runExtraction(
     );
   }
 
+  if (local.status === "VISION_REQUIRED" && !provider) {
+    return buildFailed(
+      input,
+      local.artifact.source,
+      local.artifact.pages,
+      local.artifact.warnings,
+      [
+        {
+          code: "NO_PROVIDER",
+          message: "Fournisseur IA indisponible : cette source nécessite une analyse multimodale",
+        },
+      ]
+    );
+  }
+
   return structureParsedDocument(input, local.artifact, provider);
 }
 
