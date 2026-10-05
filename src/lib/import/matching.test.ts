@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { proposeImportItemMatch } from "./matching";
+import {
+  findExactImportDuplicateGroups,
+  proposeImportItemMatch,
+} from "./matching";
 
 const existing = [
   { id: "a1", name: "Riz parfumé", phone: null, email: null },
@@ -105,4 +108,43 @@ describe("proposeImportItemMatch", () => {
       ).existing_id
     ).toBeNull();
   });
+
+  it("regroupe uniquement les doublons exacts de contenu", () => {
+    const groups = findExactImportDuplicateGroups([
+      {
+        id: "b2",
+        entityType: "product",
+        createdAt: "2026-10-05T00:00:01Z",
+        fields: {
+          name: { raw: "Riz parfumé", normalized: "Riz parfume" },
+          sale_price: { raw: "18 500", normalized: 18500 },
+        },
+      },
+      {
+        id: "b1",
+        entityType: "product",
+        createdAt: "2026-10-05T00:00:00Z",
+        fields: {
+          sale_price: { raw: "18 500", normalized: 18500 },
+          name: { raw: "Riz parfumé", normalized: "Riz parfume" },
+        },
+      },
+      {
+        id: "b3",
+        entityType: "product",
+        createdAt: "2026-10-05T00:00:02Z",
+        fields: {
+          name: { raw: "Riz parfumé", normalized: "Riz parfume" },
+          sale_price: { raw: "18 600", normalized: 18600 },
+        },
+      },
+    ]);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({
+      keepId: "b1",
+      duplicateIds: ["b2"],
+    });
+  });
+
 });
