@@ -1037,19 +1037,13 @@ export async function matchImportSession(
 
   if (duplicateGroups.length > 0) {
     const duplicateIds = duplicateGroups.flatMap((group) => group.duplicateIds);
-    const duplicateKeepById = new Map<string, string>();
-    duplicateGroups.forEach((group) => {
-      group.duplicateIds.forEach((id) => duplicateKeepById.set(id, group.keepId));
-    });
-
     const { error: dedupError } = await supabase
       .from("import_items")
       .update({
         action: "ignore",
         status: "ignored",
         match: null,
-        error_message: "Doublon exact détecté : conservé en revue sous l'item de référence " +
-          duplicateIds.map((id) => duplicateKeepById.get(id) ?? "").join(", "),
+        error_message: "Doublon exact détecté : l’item de référence est conservé en revue.",
         updated_at: new Date().toISOString(),
       })
       .eq("session_id", session.id)
