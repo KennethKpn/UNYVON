@@ -426,7 +426,12 @@ export async function getImportDocuments(
 
 // ---------------------------------------------------------------------------
 // Extraction (Phase 4) — Storage → lecture → extraction → structure validée.
-// Lecture seule : aucune écriture DB, aucune mutation d'état.
+// L'orchestration persiste les états de travail :
+//   uploaded → parsing → extracted
+//   parsed   → extracting → extracted
+// Une panne IA après lecture locale revient à parsed, afin que le travail de
+// lecture ne soit pas présenté comme définitivement perdu. Les claims sont
+// atomiques : un second appel concurrent ne peut pas lancer un second fournisseur.
 //
 // Précondition d'état : 'uploaded' EXACTEMENT. L'extraction ne doit jamais
 // transformer un document en cours d'upload ('uploading') ni un document
@@ -526,8 +531,12 @@ export async function startImportProcessing(
   // Un ou plusieurs documents peuvent être déjà en échec : ils restent
   // visibles et relançables, mais ne doivent pas empêcher le traitement des
   // autres fichiers correctement téléversés.
-  if (!rows.some((row) => row.state === "uploaded")) {
-    throw new Error("Aucun document prêt à traiter : relancez ou ajoutez un fichier.");
+  if (
+    !rows.some((row) => row.state === "uploaded" || row.state === "parsed")
+  ) {
+    throw new Error(
+      "Aucun document prêt à traiter : relancez ou ajoutez un fichier."
+    );
   }
 
   const { data, error } = await supabase
@@ -600,42 +609,97 @@ export async function materializeImportDocument(
     return (existing ?? []) as DatabaseImportItem[];
   }
 
-  if (document.state !== "uploaded") {
+  const claimFrom = document.state;
+  const claimTo =
+    claimFrom === "uploaded"
+      ? "parsing"
+      : claimFrom === "parsed"
+        ? "extracting"
+        : null;
+
+  if (!claimTo) {
     throw new Error(
-      `Matérialisation autorisée uniquement depuis 'uploaded' (état actuel : ${document.state})`
+      `Extraction déjà en cours ou état non rejouable (${document.state})`
+    );
+  }
+
+  // Claim atomique : un second onglet/processus qui voit encore l'ancien état
+  // perd la course ici et ne doit jamais atteindre le fournisseur IA.
+  const { data: claimed, error: claimError } = await supabase
+    .from("import_documents")
+    .update({ state: claimTo, error_message: null })
+    .eq("id", document.id)
+    .eq("state", claimFrom)
+    .select()
+    .single();
+
+  if (claimError || !claimed) {
+    throw new Error(
+      `Document déjà pris en charge ou impossible à réserver : ${claimError?.message ?? "claim refusé"}`
     );
   }
 
   let extracted: ExtractedDocument;
   try {
-    extracted = await performImportDocumentExtraction(supabase, document);
+    extracted = await performImportDocumentExtraction(supabase, {
+      ...document,
+      state: claimTo,
+    });
   } catch (error) {
     const message = (error as Error).message;
-    await supabase
+    const { error: failError } = await supabase
       .from("import_documents")
       .update({ state: "failed", error_message: message })
       .eq("id", document.id)
-      .eq("state", "uploaded");
+      .eq("state", claimTo);
+
+    if (failError) {
+      throw new Error(
+        `Extraction échouée (${message}) et état impossible à persister : ${failError.message}`
+      );
+    }
     throw new Error(message);
   }
 
-  if (extracted.status !== "SUCCESS") {
-    const detail =
-      extracted.errors.map((error) => error.message).join("; ") ||
-      extracted.warnings.map((warning) => warning.message).join("; ") ||
-      "Extraction incomplète : aucune sortie exploitable";
-    const diagnostics = await extractionDiagnostics(extracted);
-    const message = `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
+  const detail =
+    extracted.errors.map((error) => error.message).join("; ") ||
+    extracted.warnings.map((warning) => warning.message).join("; ") ||
+    "Extraction incomplète : aucune sortie exploitable";
+  const diagnostics = await extractionDiagnostics(extracted);
+  const message =
+    detail === "Extraction incomplète : aucune sortie exploitable"
+      ? `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`
+      : `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
 
-    await supabase
+  // Un échec fournisseur/réponse du modèle est récupérable : le document reste
+  // parsed et peut être repris sans être re-uploadé. Les échecs de lecture ou
+  // de format restent terminalement failed.
+  const retryableExtractionFailure =
+    extracted.status === "PARTIAL" ||
+    extracted.errors.some(
+      (error) =>
+        error.code === "PROVIDER_ERROR" ||
+        error.code === "NO_PROVIDER" ||
+        error.code === "INVALID_OUTPUT"
+    );
+
+  if (extracted.status !== "SUCCESS") {
+    const targetState = retryableExtractionFailure ? "parsed" : "failed";
+    const { error: persistError } = await supabase
       .from("import_documents")
       .update({
-        state: "failed",
+        state: targetState,
         page_count: extracted.pages.length,
         error_message: message,
       })
       .eq("id", document.id)
-      .eq("state", "uploaded");
+      .eq("state", claimTo);
+
+    if (persistError) {
+      throw new Error(
+        `Extraction refusée (${message}) et état impossible à persister : ${persistError.message}`
+      );
+    }
 
     throw new Error(message);
   }
@@ -659,6 +723,25 @@ export async function materializeImportDocument(
   );
 
   if (error) {
+    // Libère le claim : le document reste rejouable et aucun état "extracting"
+    // orphelin ne bloque l'utilisateur après une panne SQL/RPC.
+    const releaseFrom = claimTo;
+    const { error: releaseError } = await supabase
+      .from("import_documents")
+      .update({
+        state: "parsed",
+        page_count: extracted.pages.length,
+        error_message: `Matérialisation impossible: ${error.message}`,
+      })
+      .eq("id", document.id)
+      .eq("state", releaseFrom);
+
+    if (releaseError) {
+      throw new Error(
+        `Erreur matérialisation transactionnelle: ${error.message}. Libération du document impossible: ${releaseError.message}`
+      );
+    }
+
     throw new Error(
       `Erreur matérialisation transactionnelle: ${error.message}`
     );
