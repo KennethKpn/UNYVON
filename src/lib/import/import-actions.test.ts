@@ -797,6 +797,33 @@ describe("deleteImportDocument", () => {
     expect(h.storageCalls[0].paths).toEqual([expectedPath]);
   });
 
+  it("passe processing → needs_review quand le dernier document non-extrait est supprimé", async () => {
+    const secondId = "77777777-7777-4777-8777-777777777777";
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [
+      h.documentRow({ state: "failed" }),
+      h.documentRow({ id: secondId, state: "extracted", original_name: "autre.pdf" }),
+    ];
+
+    await deleteImportDocument(h.DOC);
+
+    expect(h.db.documents.map((doc) => doc.state)).toEqual(["extracted"]);
+    expect(h.db.sessions[0].state).toBe("needs_review");
+  });
+
+  it("ne laisse pas une session processing sans document après suppression du dernier document", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [h.documentRow({ state: "failed" })];
+
+    await deleteImportDocument(h.DOC);
+
+    expect(h.db.documents).toHaveLength(0);
+    expect(h.db.sessions[0].state).toBe("failed");
+    expect(h.db.sessions[0].error_message).toBe(
+      "Tous les documents de la session ont été supprimés."
+    );
+  });
+
   it("supprime un document en uploaded (row + objet)", async () => {
     h.db.documents = [h.documentRow({ state: "uploaded" })];
     await deleteImportDocument(h.DOC);
