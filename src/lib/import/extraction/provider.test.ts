@@ -324,14 +324,16 @@ describe("robustesse fournisseur", () => {
     await expect(provider!.parse({ kind: "text", text: "x" })).rejects.toThrow(/JSON/i);
   });
 
-  it("erreur réseau (fetch rejette) : rejet propagé propre", async () => {
+  it("erreur réseau (fetch rejette) : erreur fournisseur transitoire normalisée", async () => {
     stubFetch(() => Promise.reject(new Error("fetch failed")));
     const provider = createProviderFromConfig({
       type: "openai",
       apiKey: "sk-fake",
       timeoutMs: 5000,
     });
-    await expect(provider!.parse({ kind: "text", text: "x" })).rejects.toThrow("fetch failed");
+    await expect(provider!.parse({ kind: "text", text: "x" })).rejects.toThrow(
+      "Erreur réseau lors de l'appel au fournisseur IA"
+    );
   });
 
   it("image : envoie base64 + mimeType au fournisseur", async () => {
@@ -371,6 +373,100 @@ describe("robustesse fournisseur", () => {
 });
 
 describe("résilience fournisseur Gemini", () => {
+  it("bascule sur le modèle suivant après une panne réseau persistante", async () => {
+    const urls: string[] = [];
+    const spy = stubFetch((url) => {
+      urls.push(url);
+      if (urls.length < 3) {
+        return Promise.reject(new TypeError("fetch failed"));
+      }
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+      model: "gemini-3.6-flash",
+    });
+
+    await expect(provider!.parse({ kind: "text", text: "Catalogue" })).resolves.toEqual(
+      JSON.parse(GEMINI_JSON)
+    );
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(urls[0]).toContain("gemini-3.6-flash");
+    expect(urls[1]).toContain("gemini-3.6-flash");
+    expect(urls[2]).toContain("gemini-3.7-flash");
+  });
+
+  it("bascule sur le modèle suivant après timeout/AbortError", async () => {
+    const urls: string[] = [];
+    const spy = stubFetch((url) => {
+      urls.push(url);
+      if (urls.length < 3) {
+        return Promise.reject(
+          new DOMException("The operation was aborted.", "AbortError")
+        );
+      }
+      return new Response(
+        JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaFake",
+      timeoutMs: 5000,
+      model: "gemini-3.6-flash",
+    });
+
+    await expect(provider!.parse({ kind: "text", text: "Catalogue" })).resolves.toEqual(
+      JSON.parse(GEMINI_JSON)
+    );
+    expect(spy).toHaveBeenCalledTimes(3);
+    expect(urls[2]).toContain("gemini-3.7-flash");
+  });
+
+  it("respecte Retry-After avant la nouvelle tentative", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const spy = stubFetch(() => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(JSON.stringify({ error: { message: "busy" } }), {
+            status: 429,
+            headers: { "Retry-After": "0.2" },
+          });
+        }
+        return new Response(
+          JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      });
+
+      const provider = createProviderFromConfig({
+        type: "gemini",
+        apiKey: "AIzaFake",
+        timeoutMs: 5000,
+      });
+
+      const pending = provider!.parse({ kind: "text", text: "Catalogue" });
+      await vi.advanceTimersByTimeAsync(199);
+      expect(spy).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(pending).resolves.toEqual(JSON.parse(GEMINI_JSON));
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+
   it("retente une erreur 429 transitoire puis réussit", async () => {
     let calls = 0;
     const spy = stubFetch((url) => {
