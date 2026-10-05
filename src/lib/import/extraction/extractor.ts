@@ -231,20 +231,6 @@ export function parseDocumentLocally(input: ExtractionInput): LocalParseResult {
     };
   }
 
-  if (!hasValidMagicSignature(input.sourceKind, input.bytes)) {
-    return {
-      status: "FAILED",
-      errors: [{
-        code: "INVALID_FILE_SIGNATURE",
-        message:
-          "Signature binaire du fichier incompatible avec le format annoncé",
-      }],
-      warnings: baseWarnings,
-      source: "none",
-      pages: [],
-    };
-  }
-
   const format = IMPORT_V1_FORMATS.find((candidate) => {
     const kinds: readonly string[] = candidate.sourceKinds;
     return kinds.includes(input.sourceKind);
@@ -253,6 +239,20 @@ export function parseDocumentLocally(input: ExtractionInput): LocalParseResult {
     return {
       status: "FAILED",
       errors: [{ code: "UNSUPPORTED_FORMAT", message: UNSUPPORTED_MESSAGE }],
+      warnings: baseWarnings,
+      source: "none",
+      pages: [],
+    };
+  }
+
+  if (!hasValidMagicSignature(input.sourceKind, input.bytes)) {
+    return {
+      status: "FAILED",
+      errors: [{
+        code: "INVALID_FILE_SIGNATURE",
+        message:
+          "Signature binaire du fichier incompatible avec le format annoncé",
+      }],
       warnings: baseWarnings,
       source: "none",
       pages: [],
