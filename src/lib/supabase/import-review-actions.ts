@@ -1,7 +1,7 @@
 "use server";
 
 import { createServerSupabase } from "@/lib/supabase/server";
-import { uuidSchema, canTransitionImportDocument } from "@/lib/import/schemas";
+import { addImportDocumentSchema, buildImportStoragePath, importStoragePathSchema, uuidSchema, canTransitionImportDocument } from "@/lib/import/schemas";
 import type {
   DatabaseImportDocument,
   DatabaseImportItem,
@@ -144,6 +144,155 @@ export async function getImportReviewData(
  * → uploaded. Si la seconde transition échoue, l'état reste uploading et
  * markImportDocumentUploaded peut être rejoué après correction.
  */
+/**
+ * Prépare un véritable ré-upload lorsqu'un document failed n'a plus son objet
+ * Storage. Le navigateur envoie ensuite les octets vers le chemin renvoyé, puis
+ * markImportDocumentUploaded ferme à nouveau la fenêtre d'upload.
+ *
+ * Le serveur reconstruit toujours le chemin à partir des identifiants fiables de
+ * la row. Aucun chemin fourni par le navigateur n'est accepté.
+ */
+export async function prepareImportDocumentReupload(input: {
+  documentId: string;
+  originalName: string;
+  sourceKind: DatabaseImportDocument["source_kind"];
+  mimeType: string;
+  sizeBytes: number;
+}): Promise<{ document: DatabaseImportDocument; storagePath: string }> {
+  const parsedDocumentId = uuidSchema.safeParse(input.documentId);
+  if (!parsedDocumentId.success) throw new Error("Identifiant document invalide");
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const { data: document, error: documentError } = await supabase
+    .from("import_documents")
+    .select("*")
+    .eq("id", input.documentId)
+    .limit(1)
+    .maybeSingle();
+
+  if (documentError) {
+    throw new Error(
+      `Erreur lecture document d'import: ${documentError.message}`
+    );
+  }
+  if (!document) throw new Error("Document d'import introuvable");
+
+  await requireManagerRole(supabase, document.organization_id);
+
+  if (document.state !== "failed") {
+    throw new Error(
+      `Réupload autorisé uniquement depuis l'état 'failed' (état actuel : ${document.state})`
+    );
+  }
+
+  const metadata = addImportDocumentSchema.parse({
+    sessionId: document.session_id,
+    originalName: input.originalName,
+    sourceKind: input.sourceKind,
+    mimeType: input.mimeType,
+    sizeBytes: input.sizeBytes,
+  });
+
+  const expectedPrefix = `organizations/${document.organization_id}/imports/${document.session_id}/documents/${document.id}/`;
+  if (
+    !importStoragePathSchema.safeParse(document.storage_path).success ||
+    !document.storage_path.startsWith(expectedPrefix)
+  ) {
+    throw new Error("Chemin Storage du document invalide");
+  }
+
+  const slash = document.storage_path.lastIndexOf("/");
+  const folder = document.storage_path.slice(0, slash);
+  const fileName = document.storage_path.slice(slash + 1);
+
+  const { data: existingObjects, error: storageError } = await supabase.storage
+    .from("imports")
+    .list(folder, { search: fileName });
+
+  if (storageError) {
+    throw new Error(
+      `Erreur vérification objet Storage: ${storageError.message}`
+    );
+  }
+
+  const oldObjectPresent = (existingObjects ?? []).some(
+    (entry) => entry.name === fileName && typeof entry.id === "string"
+  );
+  if (oldObjectPresent) {
+    throw new Error(
+      "Objet Storage encore présent : utilisez « Relancer » plutôt que « Réuploader »"
+    );
+  }
+
+  const storagePath = buildImportStoragePath(
+    document.organization_id,
+    document.session_id,
+    document.id,
+    metadata.originalName
+  );
+
+  if (!importStoragePathSchema.safeParse(storagePath).success) {
+    throw new Error("Chemin Storage de réupload invalide");
+  }
+
+  const targetSlash = storagePath.lastIndexOf("/");
+  const targetFolder = storagePath.slice(0, targetSlash);
+  const targetName = storagePath.slice(targetSlash + 1);
+  const { data: targetObjects, error: targetStorageError } = await supabase.storage
+    .from("imports")
+    .list(targetFolder, { search: targetName });
+
+  if (targetStorageError) {
+    throw new Error(
+      `Erreur vérification du chemin de réupload: ${targetStorageError.message}`
+    );
+  }
+
+  const targetPresent = (targetObjects ?? []).some(
+    (entry) => entry.name === targetName && typeof entry.id === "string"
+  );
+  if (targetPresent) {
+    throw new Error(
+      "Un fichier existe déjà au chemin de réupload : choisissez un autre nom"
+    );
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from("import_documents")
+    .update({
+      original_name: metadata.originalName,
+      source_kind: metadata.sourceKind,
+      mime_type: metadata.mimeType,
+      size_bytes: metadata.sizeBytes,
+      storage_path: storagePath,
+      state: "uploading",
+      page_count: null,
+      parsed_artifact: null,
+      parsed_at: null,
+      processed_at: null,
+      error_message: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", document.id)
+    .eq("organization_id", document.organization_id)
+    .eq("state", "failed")
+    .select()
+    .single();
+
+  if (updateError || !updated) {
+    throw new Error(
+      `Erreur préparation du réupload: ${updateError?.message ?? "aucune ligne mise à jour"}`
+    );
+  }
+
+  return {
+    document: updated as DatabaseImportDocument,
+    storagePath,
+  };
+}
+
 export async function retryImportDocument(
   documentId: string
 ): Promise<DatabaseImportDocument> {
