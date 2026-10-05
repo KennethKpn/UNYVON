@@ -452,20 +452,6 @@ describe("résilience fournisseur Gemini", () => {
     expect(urls[4]).toContain("gemini-3.5-flash");
   });
 
-    const provider = createProviderFromConfig({
-      type: "gemini",
-      apiKey: "AIzaFake",
-      timeoutMs: 5000,
-    });
-
-    await provider!.parse({ kind: "text", text: "Catalogue" });
-
-    expect(spy).toHaveBeenCalledTimes(3);
-    expect(urls[0]).toContain("gemini-3.6-flash");
-    expect(urls[1]).toContain("gemini-3.6-flash");
-    expect(urls[2]).toContain("gemini-3.5-flash");
-  });
-
   it("envoie un PDF brut à Gemini pour le fallback documentaire", async () => {
     const spy = stubFetch(() =>
       new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: GEMINI_JSON }] } }] }), {
