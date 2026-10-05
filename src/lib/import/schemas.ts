@@ -179,13 +179,31 @@ export function importFileIssue(
   return null;
 }
 
+export function sanitizeImportStorageFileName(fileName: string): string {
+  const extension = fileName.includes(".")
+    ? `.${fileName.split(".").pop()!.toLowerCase()}`
+    : "";
+  const stem = extension ? fileName.slice(0, -extension.length) : fileName;
+
+  const normalized = stem
+    .normalize("NFD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[^A-Za-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^[_-]+|[_-]+$/g, "");
+
+  const safeStem = (normalized || "document").slice(0, 180);
+  const safeExtension = /^\\.[a-z0-9]{1,8}$/.test(extension) ? extension : "";
+  return safeStem + safeExtension;
+}
+
 export function buildImportStoragePath(
   organizationId: string,
   sessionId: string,
   documentId: string,
   fileName: string
 ): string {
-  const safeName = fileName.replace(/[\\/]/g, "_");
+  const safeName = sanitizeImportStorageFileName(fileName);
   return `organizations/${organizationId}/imports/${sessionId}/documents/${documentId}/${safeName}`;
 }
 
