@@ -124,10 +124,31 @@ test.describe("smart import — lots multi-fichiers", () => {
     );
 
     await expect(
-      page.getByRole("alert").filter({ hasText: /jusqu'à 5 fichiers par lot/i })
+      page.getByTestId("import-upload-error").filter({ hasText: /jusqu'à 5 fichiers par lot/i })
     ).toBeVisible();
 
     await expect(page.getByText("too-many-1.png", { exact: true })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Annuler l'import" }).click();
+    await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
+  });
+
+  test("signale un PNG dont le MIME navigateur est incompatible", async ({ page }) => {
+    await page.goto("/import");
+    await page.getByRole("button", { name: "Nouvel import" }).click();
+    await page.waitForURL(/\/import\?session=[0-9a-f-]{36}$/);
+
+    const input = page.locator('input[aria-label="Fichiers à importer"]');
+    await input.setInputFiles({
+      name: "mauvais-type.png",
+      mimeType: "application/octet-stream",
+      buffer: Buffer.from("png-test"),
+    });
+
+    await expect(
+      page.getByTestId("import-upload-error").filter({ hasText: /type MIME incompatible/i })
+    ).toBeVisible();
+    await expect(page.getByText("mauvais-type.png", { exact: true })).toHaveCount(0);
 
     await page.getByRole("button", { name: "Annuler l'import" }).click();
     await expect(page.getByText("Import annulé.", { exact: true })).toBeVisible();
