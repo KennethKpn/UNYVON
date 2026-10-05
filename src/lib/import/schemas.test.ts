@@ -517,3 +517,35 @@ describe("transitions d'état", () => {
     expect(canTransitionImportItemStatus("pending", "imported")).toBe(false);
   });
 });
+
+
+describe("Storage import filenames", () => {
+  it("sanitise les noms non ASCII et caractères risqués sans changer le nom affiché", () => {
+    const path = buildImportStoragePath(
+      ORG_ID,
+      SESSION_ID,
+      DOCUMENT_ID,
+      "Capture d'écran 2026-10-05 001718.png"
+    );
+
+    expect(path).toBe(
+      "organizations/" + ORG_ID +
+      "/imports/" + SESSION_ID +
+      "/documents/" + DOCUMENT_ID +
+      "/Capture_d_ecran_2026-10-05_001718.png"
+    );
+    expect(importStoragePathSchema.safeParse(path).success).toBe(true);
+  });
+
+  it("conserve les extensions supportées et remplace les séparateurs de chemin", () => {
+    const path = buildImportStoragePath(
+      ORG_ID,
+      SESSION_ID,
+      DOCUMENT_ID,
+      "rapport final/juin 2026.pdf"
+    );
+
+    expect(path.endsWith("/rapport_final_juin_2026.pdf")).toBe(true);
+    expect(importStoragePathSchema.safeParse(path).success).toBe(true);
+  });
+});
