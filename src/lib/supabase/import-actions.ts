@@ -386,7 +386,10 @@ export async function deleteImportDocument(documentId: string): Promise<void> {
   const { error: storageError } = await supabase.storage
     .from("imports")
     .remove([document.storage_path]);
-  if (!storageError) return;
+  if (!storageError) {
+    await reconcileImportSessionAfterDocumentDeletion(supabase, document.session_id);
+    return;
+  }
 
   const { error: restoreError } = await supabase
     .from("import_documents")
@@ -399,6 +402,64 @@ export async function deleteImportDocument(documentId: string): Promise<void> {
   throw new Error(
     `Objet Storage orphelin possible [${document.storage_path}] : suppression échouée (${storageError.message}) et restauration impossible (${restoreError.message})`
   );
+}
+
+// Une suppression peut débloquer une session restée en 'processing'.
+// On recalcule l'état uniquement à partir des documents encore présents.
+// La mise à jour est conditionnelle : une transition concurrente gagne.
+async function reconcileImportSessionAfterDocumentDeletion(
+  supabase: ServerSupabase,
+  sessionId: string
+): Promise<void> {
+  const session = await fetchSession(supabase, sessionId);
+  if (session.state !== "processing") return;
+
+  const { data: remaining, error } = await supabase
+    .from("import_documents")
+    .select("id, state")
+    .eq("session_id", session.id);
+
+  if (error) {
+    throw new Error(
+      `Document supprimé, mais impossible de réconcilier l'état de la session: ${error.message}`
+    );
+  }
+
+  const documents = remaining ?? [];
+  const nextState =
+    documents.length === 0
+      ? "failed"
+      : documents.every((row) => row.state === "extracted")
+        ? "needs_review"
+        : null;
+
+  if (!nextState) return;
+
+  const payload =
+    nextState === "failed"
+      ? {
+          state: "failed",
+          error_message: "Tous les documents de la session ont été supprimés.",
+          updated_at: new Date().toISOString(),
+        }
+      : {
+          state: "needs_review",
+          updated_at: new Date().toISOString(),
+        };
+
+  const { error: updateError } = await supabase
+    .from("import_sessions")
+    .update(payload)
+    .eq("id", session.id)
+    .eq("state", "processing")
+    .select()
+    .maybeSingle();
+
+  if (updateError) {
+    throw new Error(
+      `Document supprimé, mais état de session impossible à réconcilier: ${updateError.message}`
+    );
+  }
 }
 
 // N'efface que l'objet appartenant À CE document : chemin conforme à la
