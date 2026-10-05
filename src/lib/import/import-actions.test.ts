@@ -40,7 +40,11 @@ const h = vi.hoisted(() => {
     // Chemins d'objets réellement présents dans le bucket. Vide = aucun objet.
     storageObjects: [] as string[],
     downloadBytes: new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]),
-    extractionQueue: [] as Array<unknown>,
+    extractionQueue: [] as Array<{
+      raw?: unknown;
+      local?: unknown;
+      structured?: unknown;
+    }>,
     rpcMaterializeError: null as string | null,
   };
 
