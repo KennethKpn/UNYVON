@@ -110,6 +110,8 @@ const h = vi.hoisted(() => {
       storage_path: `organizations/${ORG}/imports/${SESSION}/documents/${DOC}/stock.pdf`,
       state: "uploading",
       page_count: null,
+      parsed_artifact: null,
+      parsed_at: null,
       error_message: null,
       processed_at: null,
       created_at: "2026-09-29T00:00:00+00:00",
@@ -328,25 +330,43 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 vi.mock("@/lib/import/extraction", () => ({
-  createDefaultProvider: () => null,
-  createDocumentExtractor: () => ({
-    extract: async () => {
+  createDefaultProvider: () => ({
+    name: "test",
+    parse: async () => {
       const next = h.db.extractionQueue.shift();
-      if (!next) {
-        return {
-          status: "SUCCESS",
-          documentId: h.DOC,
-          sourceKind: "pdf",
-          source: "pdf-local",
-          pages: [{ page: 1, text: "Produit Test" }],
-          candidates: [],
-          warnings: [],
-          errors: [],
-        };
-      }
-      return next;
+      return next?.raw ?? {
+        candidates: [],
+      };
     },
   }),
+  parseDocumentLocally: (_input: unknown) => {
+    const next = h.db.extractionQueue.shift();
+    if (next?.local) return next.local;
+    return {
+      status: "READY",
+      artifact: {
+        version: 1,
+        source: "pdf-local",
+        pages: [{ page: 1, text: "Produit Test" }],
+        warnings: [],
+      },
+    };
+  },
+  parsePersistedArtifact: (value: unknown) => value,
+  structureParsedDocument: async (_input: unknown, _artifact: unknown, _provider: unknown) => {
+    const next = h.db.extractionQueue.shift();
+    if (next?.structured) return next.structured;
+    return {
+      status: "SUCCESS",
+      documentId: h.DOC,
+      sourceKind: "pdf",
+      source: "pdf-local",
+      pages: [{ page: 1, text: "Produit Test" }],
+      candidates: [],
+      warnings: [],
+      errors: [],
+    };
+  },
 }));
 
 import {
@@ -884,8 +904,8 @@ describe("startImportProcessing — lots partiellement en échec", () => {
   });
 });
 
-describe("materializeImportDocument — state machine resumable", () => {
-  const success = {
+describe("materializeImportDocument — parsing durable", () => {
+  const structuredSuccess = {
     status: "SUCCESS",
     documentId: h.DOC,
     sourceKind: "pdf",
@@ -896,91 +916,174 @@ describe("materializeImportDocument — state machine resumable", () => {
     errors: [],
   };
 
-  const providerPartial = {
-    status: "PARTIAL",
-    documentId: h.DOC,
-    sourceKind: "pdf",
-    source: "pdf-local",
-    pages: [
-      { page: 1, text: "Produit Test" },
-      { page: 2, text: "Client Test" },
-    ],
-    candidates: [],
-    warnings: [],
-    errors: [{ code: "PROVIDER_ERROR", message: "Gemini 503" }],
-  };
-
   beforeEach(() => {
     h.db.sessions = [h.sessionRow({ state: "processing" })];
     h.db.documents = [h.documentRow({ state: "uploaded" })];
   });
 
-  it("claim uploaded → parsing : une panne IA laisse le document en parsed et rejouable", async () => {
-    h.db.extractionQueue = [providerPartial];
+  it("persiste l'artefact local avant la structuration IA", async () => {
+    h.db.extractionQueue = [
+      {
+        local: {
+          status: "READY",
+          artifact: {
+            version: 1,
+            source: "pdf-local",
+            pages: [
+              { page: 1, text: "Produit A 10 000 FCFA" },
+              { page: 2, text: "Client A" },
+            ],
+            warnings: [],
+          },
+        },
+      },
+      { structured: structuredSuccess },
+    ];
 
-    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
-      "Gemini 503"
-    );
+    await materializeImportDocument(h.DOC);
 
-    expect(h.db.documents[0].state).toBe("parsed");
-    expect(h.db.documents[0].page_count).toBe(2);
-    expect(h.db.documents[0].error_message).toContain("Gemini 503");
-    expect(h.rpcCalls.find((call) => call.fn === "materialize_import_document")).toBeUndefined();
-  });
-
-  it("parsed → extracting → extracted : une reprise réussie passe la frontière RPC", async () => {
-    h.db.documents = [h.documentRow({ state: "parsed" })];
-    h.db.extractionQueue = [success];
-
-    const items = await materializeImportDocument(h.DOC);
-
-    expect(items).toEqual([]);
     expect(h.db.documents[0].state).toBe("extracted");
-    expect(h.rpcCalls.at(-1)?.fn).toBe("materialize_import_document");
+    expect(h.db.documents[0].parsed_at).toBeTruthy();
+    expect(h.db.documents[0].parsed_artifact).toEqual({
+      version: 1,
+      source: "pdf-local",
+      pages: [
+        { page: 1, text: "Produit A 10 000 FCFA" },
+        { page: 2, text: "Client A" },
+      ],
+      warnings: [],
+    });
+    expect(h.db.documents[0].page_count).toBe(2);
   });
 
-  it("deux appels concurrents simulés : le document déjà parsing est refusé avant le fournisseur", async () => {
-    h.db.documents = [h.documentRow({ state: "parsing" })];
-    h.db.extractionQueue = [success];
+  it("panne IA après parsing laisse parsed avec artefact durable", async () => {
+    h.db.extractionQueue = [
+      {
+        local: {
+          status: "READY",
+          artifact: {
+            version: 1,
+            source: "pdf-local",
+            pages: [{ page: 1, text: "Produit B 20 000 FCFA" }],
+            warnings: [],
+          },
+        },
+      },
+      {
+        structured: {
+          status: "PARTIAL",
+          documentId: h.DOC,
+          sourceKind: "pdf",
+          source: "pdf-local",
+          pages: [{ page: 1, text: "Produit B 20 000 FCFA" }],
+          candidates: [],
+          warnings: [],
+          errors: [{ code: "PROVIDER_ERROR", message: "Gemini 503" }],
+        },
+      },
+    ];
 
-    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
-      "Extraction déjà en cours"
-    );
-
-    expect(h.db.extractionQueue).toHaveLength(1);
-  });
-
-  it("échec SQL après extraction : le claim est libéré vers parsed au lieu de laisser extracting bloqué", async () => {
-    h.db.rpcMaterializeError = "RPC indisponible";
-    h.db.extractionQueue = [success];
-
-    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
-      "RPC indisponible"
-    );
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow("Gemini 503");
 
     expect(h.db.documents[0].state).toBe("parsed");
-    expect(h.db.documents[0].page_count).toBe(1);
+    expect(h.db.documents[0].parsed_artifact).toEqual({
+      version: 1,
+      source: "pdf-local",
+      pages: [{ page: 1, text: "Produit B 20 000 FCFA" }],
+      warnings: [],
+    });
   });
 
-  it("une panne de lecture non-fournisseur reste failed", async () => {
-    h.db.extractionQueue = [{
-      status: "FAILED",
-      documentId: h.DOC,
-      sourceKind: "pdf",
+  it("reprise depuis parsed réutilise l'artefact sans relecture locale", async () => {
+    h.db.documents = [h.documentRow({
+      state: "parsed",
+      parsed_artifact: {
+        version: 1,
+        source: "pdf-local",
+        pages: [{ page: 1, text: "Produit C 30 000 FCFA" }],
+        warnings: [],
+      },
+      parsed_at: "2026-10-05T19:00:00+00:00",
+      page_count: 1,
+    })];
+    h.db.extractionQueue = [{ structured: structuredSuccess }];
+
+    const before = JSON.stringify(h.db.documents[0].parsed_artifact);
+    await materializeImportDocument(h.DOC);
+
+    expect(JSON.stringify(h.db.documents[0].parsed_artifact)).toBe(before);
+    expect(h.db.documents[0].state).toBe("extracted");
+  });
+
+  it("document parsed ancien sans artefact est auto-rattrapé une seule fois", async () => {
+    h.db.documents = [h.documentRow({
+      state: "parsed",
+      parsed_artifact: null,
+    })];
+    h.db.extractionQueue = [
+      {
+        local: {
+          status: "READY",
+          artifact: {
+            version: 1,
+            source: "pdf-local",
+            pages: [{ page: 1, text: "Ancien document" }],
+            warnings: [],
+          },
+        },
+      },
+      { structured: structuredSuccess },
+    ];
+
+    await materializeImportDocument(h.DOC);
+
+    expect(h.db.documents[0].parsed_artifact).toEqual({
+      version: 1,
       source: "pdf-local",
-      pages: [],
-      candidates: [],
+      pages: [{ page: 1, text: "Ancien document" }],
       warnings: [],
-      errors: [{ code: "UNREADABLE_DOCUMENT", message: "Document illisible" }],
+    });
+    expect(h.db.documents[0].state).toBe("extracted");
+  });
+
+  it("échec de lecture locale reste failed et n'invente pas d'artefact", async () => {
+    h.db.extractionQueue = [{
+      local: {
+        status: "FAILED",
+        source: "pdf-local",
+        pages: [],
+        warnings: [],
+        errors: [{ code: "UNREADABLE_DOCUMENT", message: "Document illisible" }],
+      },
     }];
 
     await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
       "Document illisible"
     );
-
     expect(h.db.documents[0].state).toBe("failed");
+    expect(h.db.documents[0].parsed_artifact).toBeNull();
+  });
+
+  it("panne RPC après extraction libère le document vers parsed en conservant l'artefact", async () => {
+    h.db.rpcMaterializeError = "RPC indisponible";
+    h.db.extractionQueue = [{ structured: structuredSuccess }];
+
+    h.db.documents = [h.documentRow({
+      state: "parsed",
+      parsed_artifact: {
+        version: 1,
+        source: "pdf-local",
+        pages: [{ page: 1, text: "Produit D" }],
+        warnings: [],
+      },
+    })];
+
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow("RPC indisponible");
+    expect(h.db.documents[0].state).toBe("parsed");
+    expect(h.db.documents[0].parsed_artifact).toBeTruthy();
   });
 });
+
 
 describe("review item edit/delete", () => {
   const ITEM = "44444444-4444-4444-8444-444444444444";
