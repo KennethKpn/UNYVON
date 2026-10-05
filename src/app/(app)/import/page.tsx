@@ -129,7 +129,15 @@ export default function ImportPage(){
           });
           try{
             await uploadImportDocument(file,made.storagePath);
-            await markImportDocumentUploaded(made.document.id);
+            const confirmed=await markImportDocumentUploaded(made.document.id);
+            setData(current=>{
+              if(!current) return current;
+              if(current.documents.some(document=>document.id===confirmed.id)) return current;
+              return {
+                ...current,
+                documents:[...current.documents,confirmed],
+              };
+            });
             succeeded.push(file.name);
           }catch(error){
             const message=error instanceof Error?error.message:"Erreur upload inconnue";
