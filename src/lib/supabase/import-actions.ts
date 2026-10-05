@@ -428,6 +428,144 @@ export async function getImportDocuments(
 }
 
 // ---------------------------------------------------------------------------
+export async function extractImportDocument(
+  documentId: string
+): Promise<ExtractedDocument> {
+  const parsedId = uuidSchema.safeParse(documentId);
+  if (!parsedId.success) throw new Error("Identifiant document invalide");
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const document = await fetchDocument(supabase, documentId);
+  await requireManagerRole(supabase, document.organization_id);
+
+  if (document.state !== "uploaded") {
+    throw new Error(
+      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${document.state})`
+    );
+  }
+
+  const bytes = await downloadImportDocumentBytes(supabase, document);
+  const local = parseDocumentLocally({
+    documentId: document.id,
+    sourceKind: document.source_kind,
+    filename: document.original_name,
+    bytes,
+  });
+
+  if (local.status === "FAILED") {
+    return {
+      status: "FAILED",
+      documentId: document.id,
+      sourceKind: document.source_kind,
+      source: local.source,
+      pages: local.pages,
+      candidates: [],
+      warnings: local.warnings,
+      errors: local.errors,
+    };
+  }
+
+  return structureParsedDocument(
+    {
+      documentId: document.id,
+      sourceKind: document.source_kind,
+      filename: document.original_name,
+      bytes,
+    },
+    local.artifact,
+    createDefaultProvider()
+  );
+}
+
+// Démarre le traitement d'une session : au moins un document uploaded ou parsed
+// doit être prêt. Une session déjà processing reste idempotemment processing.
+export async function startImportProcessing(
+  sessionId: string
+): Promise<DatabaseImportSession> {
+  uuidSchema.parse(sessionId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const session = await fetchSession(supabase, sessionId);
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state === "processing") return session;
+  if (session.state !== "collecting") {
+    throw new Error(
+      `Démarrage du traitement non autorisé depuis l'état ${session.state}`
+    );
+  }
+
+  const { data: documents, error: documentsError } = await supabase
+    .from("import_documents")
+    .select("id, state")
+    .eq("session_id", sessionId)
+    .order("created_at", { ascending: true });
+
+  if (documentsError) {
+    throw new Error(
+      `Erreur lecture documents avant traitement: ${documentsError.message}`
+    );
+  }
+
+  const rows = documents ?? [];
+  if (rows.length === 0) {
+    throw new Error("Impossible de traiter une session sans document");
+  }
+
+  if (!rows.some((row) => row.state === "uploaded" || row.state === "parsed")) {
+    throw new Error(
+      "Aucun document prêt à traiter : relancez ou ajoutez un fichier."
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("import_sessions")
+    .update({ state: "processing" })
+    .eq("id", sessionId)
+    .eq("state", "collecting")
+    .select()
+    .single();
+
+  if (!error) return data as DatabaseImportSession;
+
+  const latest = await fetchSession(supabase, sessionId);
+  if (latest.state === "processing") return latest;
+
+  throw new Error(
+    `Erreur démarrage du traitement d'import: ${error.message}`
+  );
+}
+
+export async function extractionDiagnostics(
+  extracted: ExtractedDocument
+): Promise<string> {
+  const pages = extracted.pages.length;
+  const characters = extracted.pages.reduce(
+    (total, page) => total + page.text.length,
+    0
+  );
+
+  if (extracted.source === "image-llm") {
+    return "Lecture image : analyse multimodale non finalisée.";
+  }
+
+  if (pages > 0) {
+    return `Lecture locale réussie : ${pages} page${pages > 1 ? "s" : ""}, ${characters.toLocaleString(
+      "fr-FR"
+    )} caractères. La structuration des données n'a pas abouti.`;
+  }
+
+  if (extracted.source === "pdf-llm") {
+    return "Lecture locale du PDF : aucun texte exploitable. Le fallback visuel IA n'a pas abouti.";
+  }
+
+  return "Lecture locale : aucun contenu exploitable.";
+}
+
 // Extraction (Phase 4) — Storage → lecture → extraction → structure validée.
 // L'orchestration persiste les états de travail :
 //   uploaded → parsing → extracted
