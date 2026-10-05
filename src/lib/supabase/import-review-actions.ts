@@ -195,6 +195,14 @@ export async function prepareImportDocumentReupload(input: {
     sizeBytes: input.sizeBytes,
   });
 
+  const expectedPrefix = `organizations/${document.organization_id}/imports/${document.session_id}/documents/${document.id}/`;
+  if (
+    !importStoragePathSchema.safeParse(document.storage_path).success ||
+    !document.storage_path.startsWith(expectedPrefix)
+  ) {
+    throw new Error("Chemin Storage du document invalide");
+  }
+
   const slash = document.storage_path.lastIndexOf("/");
   const folder = document.storage_path.slice(0, slash);
   const fileName = document.storage_path.slice(slash + 1);
