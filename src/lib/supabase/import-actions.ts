@@ -548,6 +548,25 @@ export async function startImportProcessing(
   );
 }
 
+function extractionDiagnostics(extracted: ExtractedDocument): string {
+  const pages = extracted.pages.length;
+  const characters = extracted.pages.reduce((total, page) => total + page.text.length, 0);
+
+  if (extracted.source === "image-llm") {
+    return "Lecture image : analyse multimodale non finalisée.";
+  }
+
+  if (pages > 0) {
+    return `Lecture locale réussie : ${pages} page${pages > 1 ? "s" : ""}, ${characters.toLocaleString("fr-FR")} caractères. La structuration des données n'a pas abouti.`;
+  }
+
+  if (extracted.source === "pdf-llm") {
+    return "Lecture locale du PDF : aucun texte exploitable. Le fallback visuel IA n'a pas abouti.";
+  }
+
+  return "Lecture locale : aucun contenu exploitable.";
+}
+
 export async function materializeImportDocument(
   documentId: string
 ): Promise<DatabaseImportItem[]> {
@@ -605,11 +624,16 @@ export async function materializeImportDocument(
       extracted.errors.map((error) => error.message).join("; ") ||
       extracted.warnings.map((warning) => warning.message).join("; ") ||
       "Extraction incomplète : aucune sortie exploitable";
-    const message = `Extraction refusée avant matérialisation: ${detail}`;
+    const diagnostics = extractionDiagnostics(extracted);
+    const message = `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
 
     await supabase
       .from("import_documents")
-      .update({ state: "failed", error_message: message })
+      .update({
+        state: "failed",
+        page_count: extracted.pages.length,
+        error_message: message,
+      })
       .eq("id", document.id)
       .eq("state", "uploaded");
 
