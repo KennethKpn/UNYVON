@@ -152,7 +152,10 @@ describe("champ name obligatoire (règle Phase 2)", () => {
 });
 
 describe("vérification de provenance", () => {
-  const candidate = (fields: Record<string, unknown>, page: number | null = 1) => ({
+  const candidate = (
+    fields: ExtractedCandidate["fields"],
+    page: number | null = 1
+  ): ExtractedCandidate => ({
     entityType: "product" as const,
     documentId: "doc",
     page,
