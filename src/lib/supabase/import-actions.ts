@@ -726,7 +726,7 @@ async function markImportDocumentFailed(
   message: string,
   pageCount: number | null
 ): Promise<void> {
-  const { error } = await supabase
+  const { data: failedRow, error } = await supabase
     .from("import_documents")
     .update({
       state: "failed",
@@ -744,6 +744,12 @@ async function markImportDocumentFailed(
   if (error) {
     throw new Error(
       `Échec extraction (${message}) et état impossible à persister : ${error.message}`
+    );
+  }
+
+  if (!failedRow) {
+    throw new Error(
+      `Échec extraction (${message}) mais le lease du document a été perdu : aucune autre écriture n'est autorisée`
     );
   }
 }
