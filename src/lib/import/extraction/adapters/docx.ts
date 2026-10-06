@@ -132,10 +132,14 @@ function readZipEntryAt(
   return { data: outcome.data ?? null, budgetExceeded: false };
 }
 
-function scanZipEntries(
-  buf: Buffer,
-  budget: DecompressionBudget
-): NamedEntryResult[] {
+interface ZipEntryMeta {
+  name: string;
+  method: number;
+  compressedSize: number;
+  localOffset: number;
+}
+
+function listZipEntries(buf: Buffer): ZipEntryMeta[] {
   let eocdOffset = -1;
   const minOffset = Math.max(0, buf.length - 22 - 65535);
   for (let i = buf.length - 22; i >= minOffset; i -= 1) {
@@ -148,7 +152,7 @@ function scanZipEntries(
 
   const entryCount = buf.readUInt16LE(eocdOffset + 10);
   let offset = buf.readUInt32LE(eocdOffset + 16);
-  const entries: NamedEntryResult[] = [];
+  const entries: ZipEntryMeta[] = [];
 
   for (let i = 0; i < entryCount; i += 1) {
     if (
@@ -158,29 +162,22 @@ function scanZipEntries(
       break;
     }
 
-    const method = buf.readUInt16LE(offset + 10);
-    const compressedSize = buf.readUInt32LE(offset + 20);
     const nameLength = buf.readUInt16LE(offset + 28);
     const extraLength = buf.readUInt16LE(offset + 30);
     const commentLength = buf.readUInt16LE(offset + 32);
-    const localOffset = buf.readUInt32LE(offset + 42);
-    const entryName = buf.toString(
-      "utf8",
-      offset + 46,
-      offset + 46 + nameLength
-    );
 
-    const entry = readZipEntryAt(
-      buf,
-      localOffset,
-      method,
-      compressedSize,
-      budget
-    );
-    entries.push({ name: entryName, ...entry });
+    entries.push({
+      name: buf.toString(
+        "utf8",
+        offset + 46,
+        offset + 46 + nameLength
+      ),
+      method: buf.readUInt16LE(offset + 10),
+      compressedSize: buf.readUInt32LE(offset + 20),
+      localOffset: buf.readUInt32LE(offset + 42),
+    });
 
     offset += 46 + nameLength + extraLength + commentLength;
-    if (entry.budgetExceeded) break;
   }
 
   return entries;
@@ -204,37 +201,65 @@ export interface DocxExtractionResult {
 export function extractDocxText(
   bytes: Uint8Array,
   budget: DecompressionBudget
-): DocxExtractionResult {
-  const buf = Buffer.from(bytes);
-  const entries = scanZipEntries(buf, budget);
-  const documentEntry = entries.find(
-    (entry) => entry.name === "word/document.xml"
+): DocxExtractionResult {  const buf = Buffer.from(bytes);
+  const entries = listZipEntries(buf);
+  const targetNames = new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.name === "word/document.xml" ||
+          /^(?:word\\/header\\d+|word\\/footer\\d+|word\\/footnotes|word\\/endnotes)\\.xml$/i.test(
+            entry.name
+          )
+      )
+      .map((entry) => entry.name)
   );
 
-  if (!documentEntry || documentEntry.budgetExceeded) {
-    return {
-      text: null,
-      budgetExceeded: documentEntry?.budgetExceeded ?? false,
-    };
+  const decoded = new Map<string, Buffer>();
+  let budgetExceeded = false;
+
+  for (const entry of entries) {
+    if (!targetNames.has(entry.name)) continue;
+
+    const result = readZipEntryAt(
+      buf,
+      entry.localOffset,
+      entry.method,
+      entry.compressedSize,
+      budget
+    );
+
+    if (result.budgetExceeded) {
+      budgetExceeded = true;
+      break;
+    }
+
+    if (result.data) {
+      decoded.set(entry.name, result.data);
+    }
   }
 
-  if (!documentEntry.data) {
-    return { text: null, budgetExceeded: false };
+  const documentXml = decoded.get("word/document.xml");
+  if (budgetExceeded || !documentXml) {
+    return { text: null, budgetExceeded };
   }
 
   const sections: string[] = [];
-  const bodyText = xmlPartToText(documentEntry.data.toString("utf8"));
+  const bodyText = documentXmlToText(documentXml.toString("utf8"));
   if (bodyText) sections.push(bodyText);
 
   const auxiliary = entries
+    .filter((entry) => decoded.has(entry.name))
     .filter(
       (entry) =>
         /^(?:word\\/header\\d+|word\\/footer\\d+|word\\/footnotes|word\\/endnotes)\\.xml$/i.test(
           entry.name
-        ) && entry.data
+        )
     )
     .map((entry) => {
-      const text = xmlPartToText(entry.data!.toString("utf8"));
+      const data = decoded.get(entry.name);
+      if (!data) return "";
+      const text = xmlPartToText(data.toString("utf8"));
       if (!text) return "";
       return "[" + auxiliaryPartLabel(entry.name) + "]\\n" + text;
     })
@@ -247,6 +272,6 @@ export function extractDocxText(
   const text = sections.join("\\n\\n").trim();
   return {
     text: text || null,
-    budgetExceeded: entries.some((entry) => entry.budgetExceeded),
+    budgetExceeded: false,
   };
 }
