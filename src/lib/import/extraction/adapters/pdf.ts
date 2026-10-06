@@ -203,6 +203,38 @@ function isCompletePageTree(
   return rawPageObjects.every((page) => treeSet.has(page.num));
 }
 
+function inlineDictionary(body: string, key: string): string | null {
+  const marker = new RegExp("/" + key + "\\s*<<");
+  const match = marker.exec(body);
+  if (!match) return null;
+
+  let depth = 1;
+  const start = match.index + match[0].length;
+  for (let index = start; index < body.length - 1; index += 1) {
+    const pair = body.slice(index, index + 2);
+    if (pair === "<<") {
+      depth += 1;
+      index += 1;
+    } else if (pair === ">>") {
+      depth -= 1;
+      if (depth === 0) return body.slice(start, index);
+      index += 1;
+    }
+  }
+
+  return null;
+}
+
+function resolveDictionaryBody(
+  object: PdfObject,
+  key: string,
+  objectsByNum: Map<number, PdfObject>
+): string | null {
+  const ref = objectRef(object.body, key);
+  if (ref !== null) return objectsByNum.get(ref)?.body ?? null;
+  return inlineDictionary(object.body, key);
+}
+
 function buildFontMaps(
   pageObject: PdfObject,
   objectsByNum: Map<number, PdfObject>,
@@ -210,22 +242,27 @@ function buildFontMaps(
   cmapCache: Map<number, ToUnicodeMap | null>,
 ): FontMap {
   const resourcesRef = resolveInheritedRef(pageObject, "Resources", objectsByNum);
-  if (resourcesRef === null) return new Map();
+  const resourcesBody =
+    resourcesRef !== null
+      ? objectsByNum.get(resourcesRef)?.body ?? null
+      : inlineDictionary(
+          objectsByNum.get(pageObject.num)?.body ?? pageObject.body,
+          "Resources"
+        );
+  if (!resourcesBody) return new Map();
 
-  const resources = objectsByNum.get(resourcesRef);
-  if (!resources) return new Map();
-
-  const fontRef = objectRef(resources.body, "Font");
-  if (fontRef === null) return new Map();
-
-  const fontDictionary = objectsByNum.get(fontRef);
-  if (!fontDictionary) return new Map();
+  const fontRef = objectRef(resourcesBody, "Font");
+  const fontDictionaryBody =
+    fontRef !== null
+      ? objectsByNum.get(fontRef)?.body ?? null
+      : inlineDictionary(resourcesBody, "Font");
+  if (!fontDictionaryBody) return new Map();
 
   const fonts: FontMap = new Map();
   const fontEntryRe = /\/(F[A-Za-z0-9_.-]+)\s+(\d+)\s+0\s+R/g;
   let match: RegExpExecArray | null;
 
-  while ((match = fontEntryRe.exec(fontDictionary.body)) !== null) {
+  while ((match = fontEntryRe.exec(fontDictionaryBody)) !== null) {
     const fontObject = objectsByNum.get(Number(match[2]));
     if (!fontObject) continue;
 
@@ -300,14 +337,24 @@ function currentFontBefore(content: string, position: number): string | null {
 function decodeTextOperators(content: string, fonts: FontMap): string {
   const fragments: string[] = [];
 
-  // Tj et TJ sont parcourus dans leur ordre réel dans le flux : cela évite
-  // de réordonner les nombres et le texte quand un PDF mélange les deux
-  // formes d'opérateur.
+  // Tj/TJ et les opérateurs de positionnement sont parcourus dans leur
+  // ordre réel. Les sauts de ligne explicites (T*, Td/TD avec déplacement
+  // vertical) ne sont plus aplatis en simples espaces.
   const operatorRe =
-    /(\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>)\s*Tj|\[([\s\S]*?)\]\s*TJ/g;
+    /(\((?:\\.|[^\\()])*\)|<([0-9A-Fa-f\s]+)>)\s*Tj|\[([\s\S]*?)\]\s*TJ|T\*|([-+0-9.]+)\s+([-+0-9.]+)\s+T[dh]/g;
 
   let operator: RegExpExecArray | null;
   while ((operator = operatorRe.exec(content)) !== null) {
+    if (operator[0] === "T*" || operator[0].endsWith(" Td") || operator[0].endsWith(" TD") || /[+-]?[0-9.]+\s+[+-]?[0-9.]+\s+T[dh]$/.test(operator[0])) {
+      const vertical =
+        operator[0] === "T*" ||
+        operator[0].endsWith(" Td") ||
+        operator[0].endsWith(" TD") ||
+        Number(operator[0].split(/\s+/)[1]) !== 0;
+      if (vertical) fragments.push("\n");
+      continue;
+    }
+
     const font = currentFontBefore(content, operator.index);
 
     if (operator[1] !== undefined) {
@@ -335,7 +382,11 @@ function decodeTextOperators(content: string, fonts: FontMap): string {
     if (operatorText) fragments.push(operatorText);
   }
 
-  return fragments.join(" ");
+  return fragments
+    .join(" ")
+    .replace(/[ \t]*\n[ \t]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export interface PdfExtractionResult {
