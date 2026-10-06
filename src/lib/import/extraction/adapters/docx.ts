@@ -27,16 +27,16 @@ function xmlUnescape(text: string): string {
 function inlineXmlToText(xml: string): string {
   const parts: string[] = [];
   const tokenRe =
-    /<w:t\\b[^>]*>([\\s\\S]*?)<\\/w:t>|<w:tab\\b[^>]*\\/\\s*>|<w:br\\b[^>]*\\/\\s*>|<w:cr\\b[^>]*\\/\\s*>/g;
+    /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:tab\b[^>]*\/\s*>|<w:br\b[^>]*\/\s*>|<w:cr\b[^>]*\/\s*>/g;
   let match: RegExpExecArray | null;
 
   while ((match = tokenRe.exec(xml)) !== null) {
     if (match[1] !== undefined) {
       parts.push(xmlUnescape(match[1]));
     } else if (match[0].startsWith("<w:tab")) {
-      parts.push("\\t");
+      parts.push("\t");
     } else {
-      parts.push("\\n");
+      parts.push("\n");
     }
   }
 
@@ -44,33 +44,33 @@ function inlineXmlToText(xml: string): string {
 }
 
 function paragraphsXmlToText(xml: string): string {
-  const paragraphs = [...xml.matchAll(/<w:p\\b[\\s\\S]*?<\\/w:p>/g)];
+  const paragraphs = [...xml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
   return paragraphs
-    .map((match) => inlineXmlToText(match[0]).replace(/[ \\t\\r\\n]+$/g, ""))
+    .map((match) => inlineXmlToText(match[0]).replace(/[ \t\r\n]+$/g, ""))
     .filter((line) => line.trim())
-    .join("\\n");
+    .join("\n");
 }
 
 function tableXmlToText(xml: string): string {
-  const rows = [...xml.matchAll(/<w:tr\\b[\\s\\S]*?<\\/w:tr>/g)];
+  const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
   return rows
     .map((row) => {
-      const cells = [...row[0].matchAll(/<w:tc\\b[\\s\\S]*?<\\/w:tc>/g)];
+      const cells = [...row[0].matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)];
       return cells
         .map((cell) =>
           paragraphsXmlToText(cell[0])
-            .replace(/\\r?\\n/g, " / ")
+            .replace(/\r?\n/g, " / ")
             .trim()
         )
-        .join("\\t");
+        .join("\t");
     })
     .filter((row) => row.trim())
-    .join("\\n");
+    .join("\n");
 }
 
 function xmlPartToText(xml: string): string {
   const blocks: string[] = [];
-  const tableRe = /<w:tbl\\b[\\s\\S]*?<\\/w:tbl>/g;
+  const tableRe = /<w:tbl\b[\s\S]*?<\/w:tbl>/g;
   let cursor = 0;
   let match: RegExpExecArray | null;
 
@@ -87,7 +87,7 @@ function xmlPartToText(xml: string): string {
   const after = paragraphsXmlToText(xml.slice(cursor));
   if (after) blocks.push(after);
 
-  return blocks.join("\\n").trim();
+  return blocks.join("\n").trim();
 }
 
 function readZipEntryAt(
@@ -185,9 +185,9 @@ function listZipEntries(buf: Buffer): ZipEntryMeta[] {
 
 function auxiliaryPartLabel(name: string): string {
   const file = name.slice(name.lastIndexOf("/") + 1);
-  const base = file.replace(/\\.xml$/i, "");
-  if (/^header\\d+$/i.test(base)) return "HEADER";
-  if (/^footer\\d+$/i.test(base)) return "FOOTER";
+  const base = file.replace(/\.xml$/i, "");
+  if (/^header\d+$/i.test(base)) return "HEADER";
+  if (/^footer\d+$/i.test(base)) return "FOOTER";
   if (/^footnotes$/i.test(base)) return "FOOTNOTES";
   if (/^endnotes$/i.test(base)) return "ENDNOTES";
   return "AUXILIARY";
@@ -208,7 +208,7 @@ export function extractDocxText(
       .filter(
         (entry) =>
           entry.name === "word/document.xml" ||
-          /^(?:word\\/header\\d+|word\\/footer\\d+|word\\/footnotes|word\\/endnotes)\\.xml$/i.test(
+          /^(?:word\/header\d+|word\/footer\d+|word\/footnotes|word\/endnotes)\.xml$/i.test(
             entry.name
           )
       )
@@ -252,7 +252,7 @@ export function extractDocxText(
     .filter((entry) => decoded.has(entry.name))
     .filter(
       (entry) =>
-        /^(?:word\\/header\\d+|word\\/footer\\d+|word\\/footnotes|word\\/endnotes)\\.xml$/i.test(
+        /^(?:word\/header\d+|word\/footer\d+|word\/footnotes|word\/endnotes)\.xml$/i.test(
           entry.name
         )
     )
@@ -261,15 +261,15 @@ export function extractDocxText(
       if (!data) return "";
       const text = xmlPartToText(data.toString("utf8"));
       if (!text) return "";
-      return "[" + auxiliaryPartLabel(entry.name) + "]\\n" + text;
+      return "[" + auxiliaryPartLabel(entry.name) + "]\n" + text;
     })
     .filter(Boolean);
 
   if (auxiliary.length > 0) {
-    sections.push(auxiliary.join("\\n\\n"));
+    sections.push(auxiliary.join("\n\n"));
   }
 
-  const text = sections.join("\\n\\n").trim();
+  const text = sections.join("\n\n").trim();
   return {
     text: text || null,
     budgetExceeded: false,
