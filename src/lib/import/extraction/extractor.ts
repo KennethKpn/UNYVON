@@ -13,7 +13,12 @@ import {
   validateLlmOutput,
   verifyProvenanceAgainstPages,
 } from "./output-schema";
-import type { Provider } from "./provider";
+import {
+  getProviderErrorDetails,
+  type Provider,
+  type ProviderErrorCategory,
+  type ProviderErrorDetails,
+} from "./provider";
 import type {
   ExtractedDocument,
   ExtractedPage,
@@ -176,6 +181,75 @@ function hasValidMagicSignature(sourceKind: string, bytes: Uint8Array): boolean 
     default:
       return false;
   }
+}
+
+function providerErrorCode(category: ProviderErrorCategory): string {
+  switch (category) {
+    case "auth":
+      return "PROVIDER_AUTH";
+    case "rate_limit":
+      return "PROVIDER_RATE_LIMIT";
+    case "timeout":
+      return "PROVIDER_TIMEOUT";
+    case "network":
+      return "PROVIDER_NETWORK";
+    case "bad_request":
+      return "PROVIDER_BAD_REQUEST";
+    case "unavailable":
+      return "PROVIDER_UNAVAILABLE";
+    case "invalid_response":
+      return "PROVIDER_INVALID_RESPONSE";
+    case "unsupported":
+      return "PROVIDER_UNSUPPORTED";
+    default:
+      return "PROVIDER_ERROR";
+  }
+}
+
+function providerErrorMessage(details: ProviderErrorDetails): string {
+  switch (details.category) {
+    case "auth":
+      return "Le fournisseur IA a refusé l'authentification ou la configuration.";
+    case "rate_limit":
+      return details.retryAfterMs !== undefined
+        ? "Le fournisseur IA est temporairement saturé ; une nouvelle tentative est possible."
+        : "Le fournisseur IA est temporairement saturé.";
+    case "timeout":
+      return "Le fournisseur IA n'a pas répondu à temps.";
+    case "network":
+      return "Impossible de joindre le fournisseur IA.";
+    case "bad_request":
+      return "La requête envoyée au fournisseur IA a été refusée.";
+    case "unavailable":
+      return "Le fournisseur IA est temporairement indisponible.";
+    case "invalid_response":
+      return "Le fournisseur IA a renvoyé une réponse inexploitable.";
+    case "unsupported":
+      return "Le fournisseur IA ne prend pas en charge cette opération.";
+    default:
+      return "Le fournisseur IA a rencontré une erreur.";
+  }
+}
+
+function toExtractionProviderError(error: unknown): {
+  code: string;
+  message: string;
+  provider?: ProviderErrorDetails;
+} {
+  const details = getProviderErrorDetails(error);
+  if (details) {
+    return {
+      code: providerErrorCode(details.category),
+      message: providerErrorMessage(details),
+      provider: details,
+    };
+  }
+
+  return {
+    code: "PROVIDER_ERROR",
+    message:
+      error instanceof Error ? error.message : "Erreur inconnue du fournisseur IA",
+  };
 }
 
 function buildFailed(
@@ -406,7 +480,10 @@ export async function structureParsedDocument(
     try {
       raw = await provider.parse(request);
     } catch (error) {
-      return fail("PROVIDER_ERROR", (error as Error).message);
+      const structured = toExtractionProviderError(error);
+      document.errors.push(structured);
+      document.status = "FAILED";
+      return document;
     }
 
     const validated = validateLlmOutput(raw, input.documentId);
@@ -453,10 +530,8 @@ export async function structureParsedDocument(
     try {
       raw = await provider.parse({ kind: "text", text: providerText });
     } catch (error) {
-      document.errors.push({
-        code: "PROVIDER_ERROR",
-        message: (error as Error).message,
-      });
+      const structured = toExtractionProviderError(error);
+      document.errors.push(structured);
       document.status = "PARTIAL";
       return document;
     }
