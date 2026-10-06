@@ -877,21 +877,36 @@ export async function materializeImportDocument(
     );
   }
 
-  const { data: claimed, error: claimError } = await supabase
-    .from("import_documents")
-    .update({ state: claimTo, error_message: null })
-    .eq("id", document.id)
-    .eq("state", claimFrom)
-    .select()
-    .single();
-
-  if (claimError || !claimed) {
-    throw new Error(
-      `Document déjà pris en charge ou impossible à réserver : ${claimError?.message ?? "claim refusé"}`
+  if (claimFrom === "parsed") {
+    const { data: claimed, error: claimError } = await supabase.rpc(
+      "claim_import_extraction_slot",
+      { p_document_id: document.id }
     );
-  }
 
-  document = claimed as DatabaseImportDocument;
+    if (claimError || !claimed) {
+      throw new Error(
+        `Réservation de l'extraction impossible: ${claimError?.message ?? "claim refusé"}`
+      );
+    }
+
+    document = claimed as DatabaseImportDocument;
+  } else {
+    const { data: claimed, error: claimError } = await supabase
+      .from("import_documents")
+      .update({ state: claimTo, error_message: null })
+      .eq("id", document.id)
+      .eq("state", claimFrom)
+      .select()
+      .single();
+
+    if (claimError || !claimed) {
+      throw new Error(
+        `Document déjà pris en charge ou impossible à réserver : ${claimError?.message ?? "claim refusé"}`
+      );
+    }
+
+    document = claimed as DatabaseImportDocument;
+  }
 
   let artifact: ImportParsedArtifact;
   let bytes: Uint8Array | null = null;
