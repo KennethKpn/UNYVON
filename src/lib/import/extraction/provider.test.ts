@@ -554,13 +554,8 @@ describe("erreurs fournisseur structurées", () => {
     });
 
     const promise = provider!.parse({ kind: "text", text: "x" });
-    await vi.runAllTimersAsync();
-
-    await expect(promise).rejects.toBeInstanceOf(ProviderHttpError);
-    try {
-      await promise;
-    } catch (error) {
-      expect(getProviderErrorDetails(error)).toEqual({
+    const assertion = expect(promise).rejects.toMatchObject({
+      details: {
         provider: "openai",
         model: "gpt-4o-mini",
         category: "rate_limit",
@@ -569,8 +564,11 @@ describe("erreurs fournisseur structurées", () => {
         providerCode: "RESOURCE_EXHAUSTED",
         retryAfterMs: 1000,
         requestId: undefined,
-      });
-    }
+      },
+    });
+
+    await vi.runAllTimersAsync();
+    await assertion;
     expect(calls).toBe(2);
     vi.useRealTimers();
   });
