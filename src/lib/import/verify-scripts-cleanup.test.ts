@@ -383,3 +383,44 @@ describe("Smart Import — liveness des leases d'extraction", () => {
     );
   });
 });
+
+
+describe("Smart Import — RLS UPDATE anti-reassignment", () => {
+  const migration = readFileSync(
+    path.join(
+      SUPABASE_DIR,
+      "migrations",
+      "20261006033000_import_rls_update_with_check.sql"
+    ),
+    "utf8"
+  );
+
+  it("ajoute WITH CHECK sur les trois politiques UPDATE d'import", () => {
+    expect(migration).toContain(
+      "alter policy import_sessions_update_owner_manager"
+    );
+    expect(migration).toContain(
+      "alter policy import_documents_update_owner_manager"
+    );
+    expect(migration).toContain(
+      "alter policy import_items_update_owner_manager"
+    );
+
+    const blocks = migration.split("alter policy ").slice(1);
+    expect(blocks).toHaveLength(3);
+    for (const block of blocks) {
+      expect(block).toMatch(/using\s*\([\s\S]*?\)\s*with check\s*\(/i);
+    }
+  });
+
+  it("conserve une autorisation limitée aux membres owner/manager", () => {
+    expect(migration).toMatch(/is_org_member\(organization_id\)/g);
+    expect(migration).toContain(
+      "current_org_role(organization_id) in ('owner', 'manager')"
+    );
+  });
+
+  it("empêche le changement du créateur de session hors de l'utilisateur courant", () => {
+    expect(migration).toContain("created_by = (select auth.uid())");
+  });
+});
