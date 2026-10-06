@@ -161,7 +161,7 @@ create trigger trg_validate_sale_item_product
 -- ---------------------------------------------------------------------------
 -- 8. RPC : confirmer une vente (ATOMIQUE)
 --    - Vérifie statut = draft
--    - Vérifie idempotence (pas de mouvements existants)
+--    - Vérifie idempotence (pas de mouvements existants)
 --    - Vérifie stock pour chaque produit
 --    - Crée les mouvements inventory_movements (type: sale)
 --    - Met à jour le statut → confirmed
