@@ -225,7 +225,7 @@ function buildFontMaps(
   const fontEntryRe = /\/(F[A-Za-z0-9_.-]+)\s+(\d+)\s+0\s+R/g;
   let match: RegExpExecArray | null;
 
-  while ((match = fontEntryRe.exec(fontDictionary.body)) !== null) {
+  while ((match = fontEntryRe.exec(fontDictionaryBody)) !== null) {
     const fontObject = objectsByNum.get(Number(match[2]));
     if (!fontObject) continue;
 
