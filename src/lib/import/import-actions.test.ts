@@ -1266,7 +1266,7 @@ describe("review item edit/delete", () => {
     );
 
     expect(h.db.items).toHaveLength(1);
-    expect(h.db.items[0].status).toBe("pending");
+    expect(h.db.items[0].status).toBe("validated");
     expect(h.db.items[0].updated_at).toBe("2026-10-06T00:02:00+00:00");
   });
 });
