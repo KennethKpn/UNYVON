@@ -6,6 +6,9 @@ import {
 } from "../types";
 import { extractTextContent } from "./adapters";
 import {
+  DOC_BEST_EFFORT_WARNING,
+  PAGINATION_UNVERIFIED_WARNING,
+  markDocumentWarningUnverified,
   markVisionProvenanceUnverified,
   validateLlmOutput,
   verifyProvenanceAgainstPages,
@@ -471,10 +474,27 @@ export async function structureParsedDocument(
     candidates.push(...validated.candidates);
   }
 
-  document.candidates = verifyProvenanceAgainstPages(
-    candidates,
-    document.pages
+  const paginationWarning = document.warnings.find(
+    (warning) => warning.code === "PDF_PAGINATION_UNVERIFIED" || warning.code === "PAGES_UNAVAILABLE"
   );
+
+  let verifiedCandidates = verifyProvenanceAgainstPages(
+    candidates,
+    document.pages,
+    {
+      pageNumbersTrusted: !paginationWarning,
+      pageWarning: paginationWarning?.message ?? PAGINATION_UNVERIFIED_WARNING,
+    }
+  );
+
+  if (artifact.warnings.some((warning) => warning.code === "DOC_BEST_EFFORT")) {
+    verifiedCandidates = markDocumentWarningUnverified(
+      verifiedCandidates,
+      DOC_BEST_EFFORT_WARNING
+    );
+  }
+
+  document.candidates = verifiedCandidates;
   document.status = "SUCCESS";
   return document;
 }
