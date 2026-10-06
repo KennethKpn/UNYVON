@@ -159,4 +159,18 @@ describe("extractPdfPages — fidélité texte avancée", () => {
 
     expect(result.pages[0].text.split("\n")).toEqual(["A", "B"]);
   });
+
+  it("n'invente pas de saut de ligne pour un déplacement Td purement horizontal", () => {
+    const pdf = pdfFromObjects([
+      "1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj",
+      "2 0 obj <</Type/Pages/Kids [3 0 R]/Count 1>> endobj",
+      "3 0 obj <</Type/Page/Parent 2 0 R/Contents 4 0 R>> endobj",
+      "4 0 obj <</Length 40>> stream\nBT (A) Tj 100 0 Td (B) Tj ET\nendstream endobj",
+    ]);
+
+    const result = extractPdfPages(pdf, createDecompressionBudget());
+
+    expect(result.pages).toHaveLength(1);
+    expect(result.pages[0].text).toBe("A B");
+  });
 });
