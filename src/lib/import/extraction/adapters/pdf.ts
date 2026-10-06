@@ -127,13 +127,89 @@ function objectRef(body: string, key: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+function objectRefs(body: string, key: string): number[] {
+  const direct = objectRef(body, key);
+  if (direct !== null) return [direct];
+
+  const arrayMatch = body.match(new RegExp("/" + key + "\\s*\\[([\\s\\S]*?)\\]"));
+  if (!arrayMatch) return [];
+
+  return [...arrayMatch[1].matchAll(/(\\d+)\\s+0\\s+R/g)].map((match) =>
+    Number(match[1])
+  );
+}
+
+function resolveInheritedRef(
+  object: PdfObject,
+  key: string,
+  objectsByNum: Map<number, PdfObject>,
+  maxDepth = 64
+): number | null {
+  const visited = new Set<number>();
+  let current: PdfObject | undefined = object;
+
+  for (let depth = 0; depth < maxDepth && current; depth += 1) {
+    if (visited.has(current.num)) return null;
+    visited.add(current.num);
+
+    const ref = objectRef(current.body, key);
+    if (ref !== null) return ref;
+
+    const parentRef = objectRef(current.body, "Parent");
+    if (parentRef === null) return null;
+    current = objectsByNum.get(parentRef);
+  }
+
+  return null;
+}
+
+function collectPageTreeRefs(
+  rootRef: number,
+  objectsByNum: Map<number, PdfObject>,
+  maxDepth = 64
+): number[] {
+  const visited = new Set<number>();
+  const leaves: number[] = [];
+
+  const visit = (ref: number, depth: number): void => {
+    if (depth > maxDepth || visited.has(ref)) return;
+    visited.add(ref);
+
+    const object = objectsByNum.get(ref);
+    if (!object) return;
+
+    if (/\/Type\s*\/?Page(?:[\s/]|$)/.test(object.body)) {
+      leaves.push(ref);
+      return;
+    }
+
+    const kids = objectRefs(object.body, "Kids");
+    for (const childRef of kids) visit(childRef, depth + 1);
+  };
+
+  visit(rootRef, 0);
+  return leaves;
+}
+
+function isCompletePageTree(
+  treeRefs: number[],
+  rawPageObjects: PdfObject[]
+): boolean {
+  if (treeRefs.length !== rawPageObjects.length) return false;
+
+  const treeSet = new Set(treeRefs);
+  if (treeSet.size !== treeRefs.length) return false;
+
+  return rawPageObjects.every((page) => treeSet.has(page.num));
+}
+
 function buildFontMaps(
   pageObject: PdfObject,
   objectsByNum: Map<number, PdfObject>,
   budget: DecompressionBudget,
   cmapCache: Map<number, ToUnicodeMap | null>,
 ): FontMap {
-  const resourcesRef = objectRef(pageObject.body, "Resources");
+  const resourcesRef = resolveInheritedRef(pageObject, "Resources", objectsByNum);
   if (resourcesRef === null) return new Map();
 
   const resources = objectsByNum.get(resourcesRef);
@@ -265,6 +341,7 @@ function decodeTextOperators(content: string, fonts: FontMap): string {
 export interface PdfExtractionResult {
   pages: ExtractedPage[];
   budgetExceeded: boolean;
+  paginationVerified: boolean;
 }
 
 export function extractPdfPages(
@@ -275,7 +352,7 @@ export function extractPdfPages(
   const source = raw.toString("latin1");
 
   if (!source.startsWith("%PDF")) {
-    return { pages: [], budgetExceeded: false };
+    return { pages: [], budgetExceeded: false, paginationVerified: false };
   }
 
   const objects: PdfObject[] = [];
@@ -292,34 +369,56 @@ export function extractPdfPages(
   const pageObjects = objects.filter((obj) =>
     /\/Type\s*\/?Page(?:[\s/]|$)/.test(obj.body)
   );
+
+  const catalog = objects.find((obj) =>
+    /\/Type\s*\/?Catalog(?:[\s/]|$)/.test(obj.body)
+  );
+  const pagesRootRef = catalog ? objectRef(catalog.body, "Pages") : null;
+  const treePageRefs =
+    pagesRootRef === null
+      ? []
+      : collectPageTreeRefs(pagesRootRef, objectsByNum);
+  const paginationVerified =
+    treePageRefs.length > 0 && isCompletePageTree(treePageRefs, pageObjects);
+  const orderedPageRefs = paginationVerified
+    ? treePageRefs
+    : pageObjects.map((pageObject) => pageObject.num);
+
   const pages: ExtractedPage[] = [];
   const cmapCache = new Map<number, ToUnicodeMap | null>();
   let budgetExceeded = false;
 
-  pageObjects.forEach((pageObject, index) => {
+  orderedPageRefs.forEach((pageRef, index) => {
     if (budgetExceeded) return;
 
-    const contentsRef = objectRef(pageObject.body, "Contents");
-    let text = "";
+    const pageObject = objectsByNum.get(pageRef);
+    if (!pageObject) return;
 
-    if (contentsRef !== null) {
+    const contentsRefs = objectRefs(pageObject.body, "Contents");
+    const contentParts: string[] = [];
+
+    for (const contentsRef of contentsRefs) {
       const contentObject = objectsByNum.get(contentsRef);
-      if (contentObject) {
-        const result = streamContent(contentObject.body, budget);
-        if (result.budgetExceeded) {
-          budgetExceeded = true;
-          return;
-        }
+      if (!contentObject) continue;
 
-        const fonts = buildFontMaps(
-          pageObject,
-          objectsByNum,
-          budget,
-          cmapCache
-        );
-        text = decodeTextOperators(result.text, fonts);
+      const result = streamContent(contentObject.body, budget);
+      if (result.budgetExceeded) {
+        budgetExceeded = true;
+        return;
       }
+
+      contentParts.push(result.text);
     }
+
+    if (budgetExceeded) return;
+
+    const fonts = buildFontMaps(
+      pageObject,
+      objectsByNum,
+      budget,
+      cmapCache
+    );
+    const text = decodeTextOperators(contentParts.join("\n"), fonts);
 
     if (text.trim()) {
       pages.push({ page: index + 1, text: text.trim() });
@@ -349,5 +448,5 @@ export function extractPdfPages(
     }
   }
 
-  return { pages, budgetExceeded };
+  return { pages, budgetExceeded, paginationVerified };
 }
