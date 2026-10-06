@@ -493,57 +493,6 @@ export async function getImportDocuments(
 }
 
 // ---------------------------------------------------------------------------
-export async function extractImportDocument(
-  documentId: string
-): Promise<ExtractedDocument> {
-  const parsedId = uuidSchema.safeParse(documentId);
-  if (!parsedId.success) throw new Error("Identifiant document invalide");
-
-  const supabase = await createServerSupabase();
-  await requireAuth(supabase);
-
-  const document = await fetchDocument(supabase, documentId);
-  await requireManagerRole(supabase, document.organization_id);
-
-  if (document.state !== "uploaded") {
-    throw new Error(
-      `Extraction autorisée uniquement depuis l'état 'uploaded' (état actuel : ${document.state})`
-    );
-  }
-
-  const bytes = await downloadImportDocumentBytes(supabase, document);
-  const local = parseDocumentLocally({
-    documentId: document.id,
-    sourceKind: document.source_kind,
-    filename: document.original_name,
-    bytes,
-  });
-
-  if (local.status === "FAILED") {
-    return {
-      status: "FAILED",
-      documentId: document.id,
-      sourceKind: document.source_kind,
-      source: local.source,
-      pages: local.pages,
-      candidates: [],
-      warnings: local.warnings,
-      errors: local.errors,
-    };
-  }
-
-  return structureParsedDocument(
-    {
-      documentId: document.id,
-      sourceKind: document.source_kind,
-      filename: document.original_name,
-      bytes,
-    },
-    local.artifact,
-    createDefaultProvider()
-  );
-}
-
 // Démarre le traitement d'une session : au moins un document uploaded ou parsed
 // doit être prêt. Une session déjà processing reste idempotemment processing.
 export async function startImportProcessing(
