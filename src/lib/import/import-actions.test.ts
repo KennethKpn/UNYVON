@@ -46,6 +46,7 @@ const h = vi.hoisted(() => {
       structured?: unknown;
     }>,
     rpcMaterializeError: null as string | null,
+    mutationRace: null as (() => void) | null,
   };
 
   const TABLES: Record<string, Row[]> = {
@@ -85,6 +86,7 @@ const h = vi.hoisted(() => {
     db.downloadBytes = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]);
     db.extractionQueue = [];
     db.rpcMaterializeError = null;
+    db.mutationRace = null;
     rpcCalls.length = 0;
     storageCalls.length = 0;
     storageListCalls.length = 0;
@@ -159,12 +161,22 @@ const h = vi.hoisted(() => {
       }
       if (st.op === "update") {
         if (db.updateError) return { data: null, error: { message: db.updateError } };
+        if (db.mutationRace) {
+          const race = db.mutationRace;
+          db.mutationRace = null;
+          race();
+        }
         const rows = selectedRows();
         for (const row of rows) Object.assign(row, st.payload);
         return { data: rows, error: null };
       }
       if (st.op === "delete") {
         if (db.deleteError) return { data: null, error: { message: db.deleteError } };
+        if (db.mutationRace) {
+          const race = db.mutationRace;
+          db.mutationRace = null;
+          race();
+        }
         const tableRows = TABLES[table] ?? [];
         const selected = selectedRows();
         const toRemove = new Set(selected);
