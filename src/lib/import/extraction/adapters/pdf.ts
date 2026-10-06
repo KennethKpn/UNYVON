@@ -345,13 +345,16 @@ function decodeTextOperators(content: string, fonts: FontMap): string {
 
   let operator: RegExpExecArray | null;
   while ((operator = operatorRe.exec(content)) !== null) {
-    if (operator[0] === "T*" || operator[0].endsWith(" Td") || operator[0].endsWith(" TD") || /[+-]?[0-9.]+\s+[+-]?[0-9.]+\s+T[dh]$/.test(operator[0])) {
-      const vertical =
-        operator[0] === "T*" ||
-        operator[0].endsWith(" Td") ||
-        operator[0].endsWith(" TD") ||
-        Number(operator[0].split(/\s+/)[1]) !== 0;
-      if (vertical) fragments.push("\n");
+    if (operator[0] === "T*") {
+      fragments.push("\n");
+      continue;
+    }
+
+    if (operator[4] !== undefined && operator[5] !== undefined) {
+      // Td/TD : seul un déplacement vertical explicite démarre une nouvelle
+      // ligne. Un déplacement horizontal pur ne doit pas fabriquer un faux
+      // saut de ligne dans une facture ou un tableau PDF.
+      if (Number(operator[5]) !== 0) fragments.push("\n");
       continue;
     }
 
