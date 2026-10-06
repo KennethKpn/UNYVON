@@ -25,11 +25,14 @@ begin
     raise exception 'Version inattendue de materialize_import_document : ancrage idempotence introuvable';
   end if;
 
+  -- Idempotence : si la fonction porte déjà le garde (par exemple parce
+  -- que la définition antérieure a été renforcée directement), aucun
+  -- remplacement supplémentaire n'est nécessaire.
   if position(
     '  if v_session.state not in (''processing'', ''needs_review'') then'
     in v_definition
   ) > 0 then
-    raise exception 'materialize_import_document contient déjà le garde de session';
+    return;
   end if;
 
   v_definition := replace(v_definition, v_before, v_after);

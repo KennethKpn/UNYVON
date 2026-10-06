@@ -25,6 +25,8 @@ jobs:
       E2E_BASE_URL: http://127.0.0.1:3000
       E2E_ALLOW_REMOTE: "0"
       E2E_ALLOW_AUTO_PROVISION: "0"
+      NOVA_E2E_MOCK: "1"
+      IMPORT_E2E_MOCK: "1"
       CI: "1"
 
     steps:
@@ -51,6 +53,34 @@ jobs:
             exit 1
           }
 
+      - name: Validate required Supabase schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+          const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+          const url = new URL("/rest/v1/import_documents", base);
+          url.searchParams.set("select", "parsed_artifact,parsed_at");
+          url.searchParams.set("limit", "0");
+
+          const response = await fetch(url, {
+            headers: {
+              apikey: anonKey,
+              Authorization: `Bearer ${anonKey}`,
+            },
+          });
+          const body = await response.text();
+
+          if (!response.ok) {
+            console.error(`Required Supabase schema import_documents.parsed_artifact/parsed_at is missing or inaccessible (HTTP ${response.status}).`);
+            console.error(body);
+            console.error("Apply supabase/migrations/0023_import_parsed_artifact.sql to UNYVON-E2E, then rerun this workflow.");
+            process.exit(1);
+          }
+
+          console.log("Required Smart Import parsed-artifact schema is present.");
+          NODE
       - name: Install dependencies
         run: npm ci
 
