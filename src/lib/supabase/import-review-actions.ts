@@ -181,6 +181,24 @@ export async function prepareImportDocumentReupload(input: {
 
   await requireManagerRole(supabase, document.organization_id);
 
+  const { data: session, error: sessionError } = await supabase
+    .from("import_sessions")
+    .select("id, state")
+    .eq("id", document.session_id)
+    .limit(1)
+    .maybeSingle();
+
+  if (sessionError) {
+    throw new Error(`Erreur lecture session d'import: ${sessionError.message}`);
+  }
+  if (!session) throw new Error("Session d'import introuvable");
+
+  if (session.state !== "collecting" && session.state !== "processing") {
+    throw new Error(
+      `Reprise du document impossible depuis l'état de session ${session.state}`
+    );
+  }
+
   if (document.state !== "failed") {
     throw new Error(
       `Réupload autorisé uniquement depuis l'état 'failed' (état actuel : ${document.state})`
