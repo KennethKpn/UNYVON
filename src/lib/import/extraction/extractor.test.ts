@@ -107,6 +107,24 @@ describe("formats V1 valides", () => {
     expect(doc.pages[1].text).toContain("page 2");
   });
 
+  it("préserve les retours ligne, les tableaux et les parties auxiliaires DOCX", async () => {
+    const doc = await run("docx", makeRichDocxBytes());
+    expect(doc.status).toBe("SUCCESS");
+    const text = doc.pages.map((page) => page.text).join("\n");
+
+    expect(text).toContain("Produit A\t2500 FCFA\nSuite A");
+    expect(text).toContain("Produit\tPrix\nHuile de palme 1L\t2500 FCFA");
+    expect(text).toContain("[HEADER]\nKAZA Catalogue");
+    expect(text).toContain("[FOOTER]\nConfidentiel");
+    expect(text).toContain("[FOOTNOTES]\nPrix hors taxe");
+  });
+
+  it("ne décompresse pas les médias DOCX non nécessaires au texte", async () => {
+    const doc = await run("docx", makeRichDocxBytes(true));
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages[0].text).toContain("Huile de palme 1L");
+  });
+
   it("extrait la texte d'un DOCX compressé (méthode zip deflate)", async () => {
     const doc = await run("docx", makeDocxBytes(["Ligne deflate 1", "Ligne deflate 2"], true));
     expect(doc.status).toBe("SUCCESS");
@@ -765,6 +783,28 @@ function makeDocxBytes(paragraphs: string[], deflate = false): Uint8Array {
   const files: Array<{ name: string; data: Buffer }> = [
     { name: "[Content_Types].xml", data: Buffer.from(contentTypes, "utf8") },
     { name: "word/document.xml", data: Buffer.from(documentXml, "utf8") },
+  ];
+  return new Uint8Array(buildZip(files, deflate ? 8 : 0));
+}
+function makeRichDocxBytes(deflate = false): Uint8Array {
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:body>
+<w:p><w:r><w:t>Produit A</w:t></w:r><w:r><w:tab/><w:t>2500 FCFA</w:t></w:r><w:r><w:br/><w:t>Suite A</w:t></w:r></w:p>
+<w:tbl>
+<w:tr><w:tc><w:p><w:r><w:t>Produit</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Prix</w:t></w:r></w:p></w:tc></w:tr>
+<w:tr><w:tc><w:p><w:r><w:t>Huile de palme 1L</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2500 FCFA</w:t></w:r></w:p></w:tc></w:tr>
+</w:tbl>
+</w:body></w:document>`;
+  const headerXml = `<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>KAZA Catalogue</w:t></w:r></w:p></w:hdr>`;
+  const footerXml = `<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Confidentiel</w:t></w:r></w:p></w:ftr>`;
+  const footnotesXml = `<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Prix hors taxe</w:t></w:r></w:p></w:footnote></w:footnotes>`;
+  const files: Array<{ name: string; data: Buffer }> = [
+    { name: "word/document.xml", data: Buffer.from(documentXml, "utf8") },
+    { name: "word/header1.xml", data: Buffer.from(headerXml, "utf8") },
+    { name: "word/footer1.xml", data: Buffer.from(footerXml, "utf8") },
+    { name: "word/footnotes.xml", data: Buffer.from(footnotesXml, "utf8") },
+    { name: "word/media/image1.bin", data: Buffer.alloc(1024 * 1024, 0xaa) },
   ];
   return new Uint8Array(buildZip(files, deflate ? 8 : 0));
 }
