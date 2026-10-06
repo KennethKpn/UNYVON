@@ -9,6 +9,7 @@ import {
   structureParsedDocument,
   type Provider,
 } from "./extractor";
+import { ProviderHttpError, type Provider } from "./provider";
 import type { ExtractedDocument } from "./types";
 
 // ---------------------------------------------------------------------------
