@@ -44,7 +44,7 @@ test.describe("NOVA — conversation bout en bout", () => {
 
     await page.reload();
     await expect(input).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(question, { exact: true })).toBeVisible();
+    await expect(page.locator("div.whitespace-pre-wrap").filter({ hasText: question }).last()).toBeVisible();
     await expect(
       page.getByText(/Je garde le contexte de notre échange précédent/)
     ).toHaveCount(0);
