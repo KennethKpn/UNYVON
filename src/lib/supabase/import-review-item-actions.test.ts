@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
     action: "create",
     status: "pending",
     error_message: null,
+    updated_at: "2026-10-06T00:00:00+00:00",
   },
 }));
 
@@ -41,10 +42,26 @@ function builder(table: string) {
     eq(column: string, value: unknown) { filters.push([column, value]); return api; },
     limit() { return api; },
     maybeSingle() {
-      if (table === "import_items" && state.item && filters.some(([c, v]) => c === "id" && v === ITEM)) {
+      if (table === "import_items" && filters.some(([c, v]) => c === "id" && v === ITEM)) {
+        const matches = state.item && filters.every(([c, v]) => state.item?.[c as keyof typeof state.item] === v);
+        if (!matches) return Promise.resolve({ data: null, error: null });
+        if (operation === "update" && state.item) {
+          Object.assign(state.item, payload);
+          return Promise.resolve({ data: state.item, error: null });
+        }
+        if (operation === "delete" && state.item) {
+          state.item = null as never;
+          return Promise.resolve({ data: { id: ITEM }, error: null });
+        }
         return Promise.resolve({ data: state.item, error: null });
       }
       if (table === "import_sessions" && filters.some(([c, v]) => c === "id" && v === SESSION)) {
+        const matches = state.session && filters.every(([c, v]) => state.session?.[c as keyof typeof state.session] === v);
+        if (!matches) return Promise.resolve({ data: null, error: null });
+        if (operation === "update" && state.session) {
+          Object.assign(state.session, payload);
+          return Promise.resolve({ data: state.session, error: null });
+        }
         return Promise.resolve({ data: state.session, error: null });
       }
       return Promise.resolve({ data: null, error: null });
@@ -113,6 +130,7 @@ beforeEach(() => {
     action: "create",
     status: "pending",
     error_message: null,
+    updated_at: "2026-10-06T00:00:00+00:00",
   };
 });
 

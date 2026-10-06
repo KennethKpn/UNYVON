@@ -46,9 +46,19 @@ export function extractTextContent(
       return singlePage(extractMarkdownText(bytes), [], "markdown-local");
     case "pdf": {
       const result = extractPdfPages(bytes, budget);
-      if (result.budgetExceeded) return decompressionError("pdf-local", []);
-      if (result.pages.length === 0) return null;
-      return { pages: result.pages, warnings: [], source: "pdf-local" };
+      const warnings: ExtractionWarning[] = [];
+      if (!result.paginationVerified) {
+        warnings.push({
+          code: "PDF_PAGINATION_UNVERIFIED",
+          message:
+            "La pagination native du PDF n'a pas pu être vérifiée : les citations de page seront traitées comme non fiables.",
+        });
+      }
+      if (result.budgetExceeded) return decompressionError("pdf-local", warnings);
+      if (result.pages.length === 0) {
+        return { pages: [], warnings, source: "pdf-local" };
+      }
+      return { pages: result.pages, warnings, source: "pdf-local" };
     }
     case "docx": {
       const warnings: ExtractionWarning[] = [

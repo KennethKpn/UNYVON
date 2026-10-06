@@ -46,6 +46,7 @@ const h = vi.hoisted(() => {
       structured?: unknown;
     }>,
     rpcMaterializeError: null as string | null,
+    mutationRace: null as (() => void) | null,
   };
 
   const TABLES: Record<string, Row[]> = {
@@ -85,6 +86,7 @@ const h = vi.hoisted(() => {
     db.downloadBytes = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]);
     db.extractionQueue = [];
     db.rpcMaterializeError = null;
+    db.mutationRace = null;
     rpcCalls.length = 0;
     storageCalls.length = 0;
     storageListCalls.length = 0;
@@ -159,12 +161,22 @@ const h = vi.hoisted(() => {
       }
       if (st.op === "update") {
         if (db.updateError) return { data: null, error: { message: db.updateError } };
+        if (db.mutationRace) {
+          const race = db.mutationRace;
+          db.mutationRace = null;
+          race();
+        }
         const rows = selectedRows();
         for (const row of rows) Object.assign(row, st.payload);
         return { data: rows, error: null };
       }
       if (st.op === "delete") {
         if (db.deleteError) return { data: null, error: { message: db.deleteError } };
+        if (db.mutationRace) {
+          const race = db.mutationRace;
+          db.mutationRace = null;
+          race();
+        }
         const tableRows = TABLES[table] ?? [];
         const selected = selectedRows();
         const toRemove = new Set(selected);
@@ -1207,6 +1219,56 @@ describe("review item edit/delete", () => {
     );
     expect(h.db.items).toHaveLength(1);
   });
+
+  it("n'ecrase pas une modification concurrente pendant l'édition d'un item", async () => {
+    h.db.mutationRace = () => {
+      h.db.items[0].status = "ignored";
+    };
+
+    await expect(
+      updateImportItemFields({
+        id: ITEM,
+        values: { name: "Nom concurrent" },
+      })
+    ).rejects.toThrow();
+
+    expect(h.db.items[0].status).toBe("ignored");
+    const fields = h.db.items[0].fields as { name: { raw: string } };
+    expect(fields.name.raw).toBe("Huile");
+  });
+
+  it("n'ecrase pas un item modifié concurrentement à statut identique", async () => {
+    h.db.mutationRace = () => {
+      const fields = h.db.items[0].fields as { name: { raw: string } };
+      fields.name.raw = "Nom concurrent";
+      h.db.items[0].updated_at = "2026-10-06T00:01:00+00:00";
+    };
+
+    await expect(
+      updateImportItemFields({
+        id: ITEM,
+        values: { name: "Nom serveur" },
+      })
+    ).rejects.toThrow("Item modifié en parallèle");
+
+    const fields = h.db.items[0].fields as { name: { raw: string } };
+    expect(fields.name.raw).toBe("Nom concurrent");
+    expect(h.db.items[0].updated_at).toBe("2026-10-06T00:01:00+00:00");
+  });
+
+  it("n'efface pas un item modifié concurrentement à statut identique", async () => {
+    h.db.mutationRace = () => {
+      h.db.items[0].updated_at = "2026-10-06T00:02:00+00:00";
+    };
+
+    await expect(deleteImportItem(ITEM)).rejects.toThrow(
+      "Item modifié en parallèle"
+    );
+
+    expect(h.db.items).toHaveLength(1);
+    expect(h.db.items[0].status).toBe("validated");
+    expect(h.db.items[0].updated_at).toBe("2026-10-06T00:02:00+00:00");
+  });
 });
 
 describe("getImportDocuments", () => {
@@ -1251,6 +1313,29 @@ describe("cancelImportSession", () => {
       "Transition d'état non autorisée"
     );
     expect(h.db.sessions[0].state).toBe("completed");
+  });
+
+  it("n'annule pas une session dont l'état a changé concurrentement", async () => {
+    h.db.mutationRace = () => {
+      h.db.sessions[0].state = "processing";
+    };
+
+    await expect(cancelImportSession(h.SESSION)).rejects.toThrow();
+
+    expect(h.db.sessions[0].state).toBe("processing");
+  });
+
+  it("n'annule pas une session modifiée concurrentement à état identique", async () => {
+    h.db.mutationRace = () => {
+      h.db.sessions[0].updated_at = "2026-10-06T00:03:00+00:00";
+    };
+
+    await expect(cancelImportSession(h.SESSION)).rejects.toThrow(
+      "Session modifiée en parallèle"
+    );
+
+    expect(h.db.sessions[0].state).toBe("collecting");
+    expect(h.db.sessions[0].updated_at).toBe("2026-10-06T00:03:00+00:00");
   });
 
   it("rejette un rôle hors owner/manager", async () => {

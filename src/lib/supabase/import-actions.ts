@@ -191,10 +191,16 @@ export async function cancelImportSession(
     .update({ state: "cancelled" })
     .eq("id", sessionId)
     .eq("state", session.state)
+    .eq("updated_at", session.updated_at)
     .select()
-    .single();
+    .maybeSingle();
   if (error) {
     throw new Error(`Erreur annulation session d'import: ${error.message}`);
+  }
+  if (!data) {
+    throw new Error(
+      "Session modifiée en parallèle : annulation annulée pour protéger son nouvel état"
+    );
   }
   return data as DatabaseImportSession;
 }
@@ -1382,12 +1388,18 @@ export async function updateImportItemFields(input: {
     .eq("session_id", session.id)
     .eq("organization_id", session.organization_id)
     .eq("status", item.status)
+    .eq("updated_at", item.updated_at)
     .select()
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
+  if (error) {
     throw new Error(
-      `Erreur enregistrement de la modification: ${error?.message ?? "aucune ligne mise à jour"}`
+      `Erreur enregistrement de la modification: ${error.message}`
+    );
+  }
+  if (!data) {
+    throw new Error(
+      "Item modifié en parallèle : modification annulée pour protéger la revue"
     );
   }
 
@@ -1433,6 +1445,7 @@ export async function deleteImportItem(itemId: string): Promise<void> {
     .eq("session_id", session.id)
     .eq("organization_id", session.organization_id)
     .eq("status", typedItem.status)
+    .eq("updated_at", typedItem.updated_at)
     .select("id")
     .maybeSingle();
 

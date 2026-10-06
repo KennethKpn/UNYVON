@@ -359,7 +359,7 @@ describe("documents inutilisables", () => {
 // ---------------------------------------------------------------------------
 
 describe("pages et provenance", () => {
-  it("conserve la provenance page de chaque candidat", async () => {
+  it("conserve la provenance page de chaque candidat quand la pagination est fiable", async () => {
     const output = {
       candidates: [
         {
@@ -381,6 +381,82 @@ describe("pages et provenance", () => {
       makePdfBytes(["alpha contenu", "beta contenu", "gamma contenu"])
     );
     expect(doc.pages.map((p) => p.page)).toEqual([1, 2, 3]);
+  });
+
+  it("neutralise une citation de page DOCX parce que la pagination native est indisponible", async () => {
+    const output = {
+      candidates: [
+        {
+          entityType: "product",
+          fields: {
+            name: { raw: "Facture ACME SARL", confidence: "high", page: 7 },
+          },
+        },
+      ],
+    };
+
+    const doc = await run(
+      "docx",
+      makeDocxBytes(["Facture ACME SARL"]),
+      fakeProvider(output)
+    );
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.candidates[0]?.page).toBeNull();
+    expect(doc.candidates[0]?.fields.name?.page).toBeNull();
+    expect(doc.candidates[0]?.fields.name?.confidence).toBe("low");
+    expect(doc.candidates[0]?.fields.name?.warning).toMatch(/pagination/i);
+    expect(doc.warnings.some((warning) => warning.code === "PAGES_UNAVAILABLE")).toBe(true);
+  });
+
+  it("rend toute sortie DOC legacy explicitement incertaine", async () => {
+    const output = {
+      candidates: [
+        {
+          entityType: "product",
+          fields: {
+            name: { raw: "Facture ACME SARL", confidence: "high", page: 1 },
+          },
+        },
+      ],
+    };
+
+    const binary = Buffer.concat([
+      Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+      Buffer.from("Facture ACME SARL", "latin1"),
+    ]);
+
+    const doc = await run("doc", new Uint8Array(binary), fakeProvider(output));
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.candidates[0]?.page).toBeNull();
+    expect(doc.candidates[0]?.fields.name?.confidence).toBe("low");
+    expect(doc.candidates[0]?.fields.name?.warning).toMatch(/best-effort/i);
+  });
+
+  it("rend non vérifiable une citation PDF quand l'arbre de pagination manque", async () => {
+    const output = {
+      candidates: [
+        {
+          entityType: "product",
+          fields: {
+            name: { raw: "Sans arbre", confidence: "high", page: 1 },
+          },
+        },
+      ],
+    };
+
+    const pdf = new TextEncoder().encode(
+      "%PDF-1.7\n10 0 obj <</Type/Page/Contents 11 0 R>> endobj\n11 0 obj <</Length 32>> stream\nBT (Sans arbre) Tj ET\nendstream endobj\n%%EOF"
+    );
+
+    const doc = await run("pdf", pdf, fakeProvider(output));
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.candidates[0]?.page).toBeNull();
+    expect(doc.candidates[0]?.fields.name?.page).toBeNull();
+    expect(doc.candidates[0]?.fields.name?.confidence).toBe("low");
+    expect(doc.candidates[0]?.fields.name?.warning).toMatch(/pagination/i);
   });
 });
 
