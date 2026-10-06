@@ -237,3 +237,42 @@ describe("verify-import-storage.sql — ownership Storage via owner_id", () => {
     expect(sql).not.toMatch(/storage\.objects\.owner\b/i);
   });
 });
+describe("Smart Import — migrations de vivacité et d'autorité d'état", () => {
+  const stateGate = readFileSync(
+    path.join(SUPABASE_DIR, "migrations", "0025_import_materialization_state_gate.sql"),
+    "utf8"
+  );
+  const reviewLiveness = readFileSync(
+    path.join(SUPABASE_DIR, "migrations", "0024_import_review_liveness.sql"),
+    "utf8"
+  );
+
+  it("refuse silencieusement toute surprise de définition avant d'altérer materialize_import_document", () => {
+    expect(stateGate).toContain("pg_catalog.pg_get_functiondef");
+    expect(stateGate).toContain("if v_definition is null");
+    expect(stateGate).toContain("Version inattendue de materialize_import_document");
+    expect(stateGate).toContain("execute v_definition");
+  });
+
+  it("injecte le garde de session AVANT le retour idempotent extracted", () => {
+    const guard = "  if v_session.state not in (''processing'', ''needs_review'') then";
+    const idempotence = "  if v_document.state = ''extracted'' then";
+    const guardIndex = stateGate.indexOf(guard);
+    const idempotenceIndex = stateGate.indexOf(idempotence);
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(idempotenceIndex).toBeGreaterThan(-1);
+    expect(guardIndex).toBeLessThan(idempotenceIndex);
+  });
+
+  it("verrouille que la finalisation refuse toute session dont un document n'est pas extracted", () => {
+    expect(reviewLiveness).toMatch(
+      /from\s+public\.import_documents\s+d[\s\S]{0,800}d\.state\s+<>\s+'extracted'/i
+    );
+    expect(reviewLiveness).toContain("Tous les documents doivent être extraits");
+  });
+
+  it("ne transforme aucune de ces migrations en fonction SECURITY DEFINER", () => {
+    expect(stateGate).not.toMatch(/security\s+definer/i);
+    expect(reviewLiveness).not.toMatch(/security\s+definer/i);
+  });
+});
