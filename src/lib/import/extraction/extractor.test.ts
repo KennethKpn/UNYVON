@@ -9,7 +9,7 @@ import {
   structureParsedDocument,
   type Provider,
 } from "./extractor";
-import { ProviderHttpError, type Provider } from "./provider";
+import { ProviderHttpError, ProviderTransportError } from "./provider";
 import type { ExtractedDocument } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -556,7 +556,7 @@ describe("erreurs fournisseur structurées", () => {
     const provider: Provider = {
       name: "gemini",
       async parse() {
-        throw new (await import("./provider")).ProviderTransportError(
+        throw new ProviderTransportError(
           "timeout interne",
           {
             details: {
