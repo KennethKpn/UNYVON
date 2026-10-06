@@ -239,11 +239,11 @@ describe("verify-import-storage.sql — ownership Storage via owner_id", () => {
 });
 describe("Smart Import — migrations de vivacité et d'autorité d'état", () => {
   const stateGate = readFileSync(
-    path.join(SUPABASE_DIR, "migrations", "0025_import_materialization_state_gate.sql"),
+    path.join(SUPABASE_DIR, "migrations", "0026_import_materialization_state_gate.sql"),
     "utf8"
   );
   const reviewLiveness = readFileSync(
-    path.join(SUPABASE_DIR, "migrations", "0024_import_review_liveness.sql"),
+    path.join(SUPABASE_DIR, "migrations", "0025_import_review_liveness.sql"),
     "utf8"
   );
 
@@ -282,7 +282,7 @@ describe("Smart Import — migrations de vivacité et d'autorité d'état", () =
 
 describe("Smart Import — capacité d'extraction IA", () => {
   const capacity = readFileSync(
-    path.join(SUPABASE_DIR, "migrations", "0026_import_extraction_capacity.sql"),
+    path.join(SUPABASE_DIR, "migrations", "0027_import_extraction_capacity.sql"),
     "utf8"
   );
 
@@ -315,7 +315,7 @@ describe("Smart Import — capacité d'extraction IA", () => {
 
 describe("Smart Import — liveness des leases d'extraction", () => {
   const lease = readFileSync(
-    path.join(SUPABASE_DIR, "migrations", "0027_import_extraction_lease.sql"),
+    path.join(SUPABASE_DIR, "migrations", "0028_import_extraction_lease.sql"),
     "utf8"
   );
 
