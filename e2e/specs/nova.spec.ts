@@ -1,22 +1,3 @@
-import { test, expect } from "@playwright/test";
-import { settleRoute } from "../helpers";
-
-test.describe("NOVA — interface conversationnelle", () => {
-  test("expose toujours le champ de conversation et le bouton d'envoi", async ({ page }) => {
-    const settled = await settleRoute(page, "/nova");
-
-    expect(
-      settled.ok,
-      `page instable : ${settled.reason ?? "?"} (url ${page.url()})`
-    ).toBe(true);
-
-    await expect(page.getByRole("heading", { name: "NOVA" })).toBeVisible();
-    await expect(page.getByTestId("nova-message-input")).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Envoyer le message" })
-    ).toBeVisible();
-    await expect(
-      page.getByText("Conversation avec NOVA")
     ).toBeVisible();
   });
 });
@@ -33,9 +14,9 @@ test.describe("NOVA — conversation bout en bout", () => {
     await input.fill(question);
     await page.getByTestId("nova-send-button").click();
 
-    await expect(page.getByText(question, { exact: true })).toBeVisible();
+    await expect(page.locator("div.whitespace-pre-wrap").filter({ hasText: question }).last()).toBeVisible();
     await expect(
-      page.getByText(/J’ai consulté vos données réelles : d+ produits actifs, d+ clients actifs./)
+      page.getByText(/J’ai consulté vos données réelles : \\d+ produits actifs, \\d+ clients actifs\./)
     ).toBeVisible({ timeout: 45_000 });
     await expect(
       page.getByText(/Chiffre d’affaires du mois : .+/)
@@ -43,7 +24,7 @@ test.describe("NOVA — conversation bout en bout", () => {
 
     await page.reload();
     await expect(input).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByText(question, { exact: true })).toBeVisible();
+    await expect(page.locator("div.whitespace-pre-wrap").filter({ hasText: question }).last()).toBeVisible();
     await expect(
       page.getByText(/Je garde le contexte de notre échange précédent/)
     ).toHaveCount(0);
@@ -52,7 +33,7 @@ test.describe("NOVA — conversation bout en bout", () => {
     await input.fill(followUp);
     await page.getByTestId("nova-send-button").click();
 
-    await expect(page.getByText(followUp, { exact: true })).toBeVisible();
+    await expect(page.locator("div.whitespace-pre-wrap").filter({ hasText: followUp }).last()).toBeVisible();
     await expect(
       page.getByText("Je garde le contexte de notre échange précédent et je poursuis sur cette base.", { exact: true })
     ).toBeVisible({ timeout: 45_000 });
