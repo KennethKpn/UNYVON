@@ -213,7 +213,9 @@ export function markDocumentWarningUnverified(
               ...provenance,
               confidence: "low" as const,
               page: null,
-              warning,
+              warning: provenance.warning
+                ? `${provenance.warning} ${warning}`
+                : warning,
             }
           : provenance,
       ])
