@@ -467,8 +467,6 @@ async function fetchProvider(
         throw error;
       }
       if (attempt === MAX_TRANSIENT_RETRIES) {
-        const message =
-          error instanceof Error ? error.message : "Erreur réseau du fournisseur IA";
         const isTimeout =
           error instanceof DOMException &&
           (error.name === "AbortError" || error.name === "TimeoutError");
@@ -520,7 +518,8 @@ async function fetchProvider(
       providerError && "code" in providerError && providerError.code != null
         ? String(providerError.code)
         : undefined;
-    const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+    const retryAfterMs =
+      parseRetryAfter(response.headers.get("retry-after")) ?? undefined;
     const category: ProviderErrorCategory =
       response.status === 401 || response.status === 403
         ? "auth"
