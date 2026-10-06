@@ -198,6 +198,63 @@ export async function cancelImportSession(
   return data as DatabaseImportSession;
 }
 
+// Reouvre uniquement une session failed qui ne contient plus aucun document.
+// Ce cas correspond au dead end créé après suppression du dernier document :
+// aucune donnée métier ne peut être partiellement engagée puisque les items
+// dépendent des documents. On ne réactive jamais une session failed qui garde
+// des documents, afin de ne pas masquer un échec d'origine inconnue.
+export async function reopenFailedImportSession(
+  sessionId: string
+): Promise<DatabaseImportSession> {
+  uuidSchema.parse(sessionId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const session = await fetchSession(supabase, sessionId);
+  await requireManagerRole(supabase, session.organization_id);
+
+  if (session.state !== "failed") {
+    throw new Error(
+      `Réouverture autorisée uniquement depuis l'état failed (état: ${session.state})`
+    );
+  }
+
+  const { data: documents, error: documentsError } = await supabase
+    .from("import_documents")
+    .select("id")
+    .eq("session_id", session.id)
+    .limit(1);
+
+  if (documentsError) {
+    throw new Error(
+      `Erreur vérification des documents avant réouverture: ${documentsError.message}`
+    );
+  }
+
+  if ((documents ?? []).length > 0) {
+    throw new Error(
+      "La session failed contient encore un document : reprise manuelle du document requise"
+    );
+  }
+
+  const { data, error } = await supabase
+    .from("import_sessions")
+    .update({ state: "collecting", error_message: null })
+    .eq("id", session.id)
+    .eq("state", "failed")
+    .select()
+    .single();
+
+  if (error || !data) {
+    throw new Error(
+      `Réouverture concurrente ou impossible de la session d'import: ${error?.message ?? "aucune ligne mise à jour"}`
+    );
+  }
+
+  return data as DatabaseImportSession;
+}
+
 // ---------------------------------------------------------------------------
 // Documents (collecte)
 // ---------------------------------------------------------------------------
