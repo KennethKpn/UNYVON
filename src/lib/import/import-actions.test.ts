@@ -47,6 +47,7 @@ const h = vi.hoisted(() => {
     }>,
     rpcMaterializeError: null as string | null,
     rpcExtractionCapacityError: null as string | null,
+    rpcRecoveryError: null as string | null,
     mutationRace: null as (() => void) | null,
   };
 
@@ -88,6 +89,7 @@ const h = vi.hoisted(() => {
     db.extractionQueue = [];
     db.rpcMaterializeError = null;
     db.rpcExtractionCapacityError = null;
+    db.rpcRecoveryError = null;
     db.mutationRace = null;
     rpcCalls.length = 0;
     storageCalls.length = 0;
@@ -102,6 +104,8 @@ const h = vi.hoisted(() => {
       state: "collecting",
       created_at: "2026-09-29T00:00:00+00:00",
       updated_at: "2026-09-29T00:00:00+00:00",
+      processing_lease_id: null,
+      processing_lease_expires_at: null,
       ...overrides,
     };
   }
@@ -260,6 +264,19 @@ const h = vi.hoisted(() => {
       if (fn === "current_org_role") {
         return { data: orgId ? (db.roles[orgId] ?? null) : null, error: null };
       }
+      if (fn === "claim_import_parsing_lease") {
+        const documentId = (args as { p_document_id: string }).p_document_id;
+        const document = db.documents.find((row) => row.id === documentId);
+        if (!document) return { data: null, error: { message: "document absent" } };
+        if (document.state !== "uploaded") {
+          return { data: null, error: { message: `état actuel: ${document.state}` } };
+        }
+        document.state = "parsing";
+        document.processing_lease_id = "lease-parsing";
+        document.processing_lease_expires_at = "2026-10-06T00:10:00+00:00";
+        document.error_message = null;
+        return { data: document, error: null };
+      }
       if (fn === "claim_import_extraction_slot") {
         if (db.rpcExtractionCapacityError) {
           return { data: null, error: { message: db.rpcExtractionCapacityError } };
@@ -282,8 +299,39 @@ const h = vi.hoisted(() => {
           };
         }
         document.state = "extracting";
+        document.processing_lease_id = "lease-extract";
+        document.processing_lease_expires_at = "2026-10-06T00:10:00+00:00";
         document.error_message = null;
         document.updated_at = "2026-10-06T00:00:01+00:00";
+        return { data: document, error: null };
+      }
+      if (fn === "recover_stale_import_document") {
+        if (db.rpcRecoveryError) {
+          return { data: null, error: { message: db.rpcRecoveryError } };
+        }
+        const documentId = (args as { p_document_id: string }).p_document_id;
+        const document = db.documents.find((row) => row.id === documentId);
+        if (!document) return { data: null, error: { message: "document absent" } };
+        const expiry = String(document.processing_lease_expires_at ?? "");
+        if (
+          !["parsing", "extracting"].includes(String(document.state)) ||
+          !expiry ||
+          expiry > "2026-10-06T00:00:00+00:00"
+        ) {
+          return {
+            data: null,
+            error: { message: "Lease encore actif : reprise refusée tant que le traitement n'est pas expiré" },
+          };
+        }
+        if (document.state === "extracting" && document.parsed_artifact) {
+          document.state = "parsed";
+        } else {
+          document.state = "uploaded";
+        }
+        document.processing_lease_id = null;
+        document.processing_lease_expires_at = null;
+        document.error_message =
+          "Traitement précédent interrompu après expiration du bail ; reprise autorisée.";
         return { data: document, error: null };
       }
       if (fn === "materialize_import_document") {
@@ -291,12 +339,18 @@ const h = vi.hoisted(() => {
           return { data: null, error: { message: db.rpcMaterializeError } };
         }
         const documentId = (args as { p_document_id: string }).p_document_id;
+        const leaseId = (args as { p_lease_id: string }).p_lease_id;
         const document = db.documents.find((row) => row.id === documentId);
+        if (document && document.processing_lease_id !== leaseId) {
+          return { data: null, error: { message: "Lease d'extraction invalide" } };
+        }
         if (document) {
           document.state = "extracted";
           document.page_count = (args as { p_page_count: number }).p_page_count;
           document.error_message = null;
           document.processed_at = "2026-10-05T00:00:00+00:00";
+          document.processing_lease_id = null;
+          document.processing_lease_expires_at = null;
         }
         const session = db.sessions.find((row) => row.id === document?.session_id);
         if (session && document && db.documents.every((row) => row.session_id !== session.id || row.state === "extracted")) {
@@ -431,6 +485,7 @@ import {
   markImportDocumentUploaded,
   markImportDocumentUploadFailed,
   materializeImportDocument,
+  recoverStaleImportDocument,
   startImportProcessing,
 } from "../supabase/import-actions";
 
@@ -976,6 +1031,131 @@ describe("startImportProcessing — lots partiellement en échec", () => {
       "Aucun document prêt à traiter"
     );
     expect(h.db.sessions[0].state).toBe("collecting");
+  });
+});
+
+describe("extractImportDocument — liveness lease", () => {
+  it("attribue un lease de lecture puis le libère avant de lancer la phase IA", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [h.documentRow({ state: "uploaded" })];
+    h.db.extractionQueue = [
+      {
+        structured: {
+          status: "SUCCESS",
+          documentId: h.DOC,
+          sourceKind: "pdf",
+          source: "pdf-local",
+          pages: [{ page: 1, text: "Produit A" }],
+          candidates: [],
+          warnings: [],
+          errors: [],
+        },
+      },
+    ];
+
+    await materializeImportDocument(h.DOC);
+
+    expect(h.db.documents[0].state).toBe("extracted");
+    expect(h.db.documents[0].processing_lease_id).toBeNull();
+    expect(
+      h.rpcCalls.map((call) => call.fn)
+    ).toEqual([
+      "current_org_role",
+      "claim_import_parsing_lease",
+      "claim_import_extraction_slot",
+      "materialize_import_document",
+    ]);
+  });
+
+  it("refuse la reprise tant que le lease est encore actif", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [
+      h.documentRow({
+        state: "extracting",
+        processing_lease_id: "lease-active",
+        processing_lease_expires_at: "2026-10-06T00:10:00+00:00",
+      }),
+    ];
+
+    await expect(recoverStaleImportDocument(h.DOC)).rejects.toThrow(
+      "Lease encore actif"
+    );
+    expect(h.db.documents[0].state).toBe("extracting");
+    expect(h.db.documents[0].processing_lease_id).toBe("lease-active");
+  });
+
+  it("récupère un extracting expiré vers parsed et fence l'ancien worker", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [
+      h.documentRow({
+        state: "extracting",
+        processing_lease_id: "lease-old",
+        processing_lease_expires_at: "2026-10-05T23:00:00+00:00",
+        parsed_artifact: {
+          version: 1,
+          source: "pdf-local",
+          pages: [{ page: 1, text: "Produit A" }],
+          warnings: [],
+        },
+      }),
+    ];
+
+    const recovered = await recoverStaleImportDocument(h.DOC);
+
+    expect(recovered.state).toBe("parsed");
+    expect(recovered.processing_lease_id).toBeNull();
+    expect(h.db.documents[0].error_message).toContain("expiration du bail");
+  });
+
+  it("récupère un parsing expiré vers uploaded pour forcer une nouvelle lecture", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [
+      h.documentRow({
+        state: "parsing",
+        processing_lease_id: "lease-old",
+        processing_lease_expires_at: "2026-10-05T23:00:00+00:00",
+        parsed_artifact: null,
+      }),
+    ];
+
+    const recovered = await recoverStaleImportDocument(h.DOC);
+
+    expect(recovered.state).toBe("uploaded");
+    expect(recovered.processing_lease_id).toBeNull();
+    expect(recovered.parsed_artifact).toBeNull();
+  });
+
+  it("un ancien worker ne peut pas matérialiser avec un lease remplacé", async () => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [
+      h.documentRow({
+        state: "extracting",
+        processing_lease_id: "lease-new",
+        processing_lease_expires_at: "2026-10-06T00:10:00+00:00",
+        parsed_artifact: {
+          version: 1,
+          source: "pdf-local",
+          pages: [{ page: 1, text: "Produit A" }],
+          warnings: [],
+        },
+      }),
+    ];
+    h.db.extractionQueue = [{ structured: { status: "SUCCESS", candidates: [], pages: [], warnings: [], errors: [] } }];
+
+    await expect(
+      (async () => {
+        const supabase = h.client;
+        const result = await supabase.rpc("materialize_import_document", {
+          p_document_id: h.DOC,
+          p_candidates: [],
+          p_page_count: 1,
+          p_lease_id: "lease-old",
+        });
+        if (result.error) throw new Error(result.error.message);
+      })()
+    ).rejects.toThrow("Lease d'extraction invalide");
+
+    expect(h.db.documents[0].state).toBe("extracting");
   });
 });
 

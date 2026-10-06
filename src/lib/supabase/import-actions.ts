@@ -689,7 +689,8 @@ async function downloadImportDocumentBytes(
 async function persistParsedArtifact(
   supabase: ServerSupabase,
   document: DatabaseImportDocument,
-  artifact: ImportParsedArtifact
+  artifact: ImportParsedArtifact,
+  leaseId: string
 ): Promise<DatabaseImportDocument> {
   const { data, error } = await supabase
     .from("import_documents")
@@ -698,10 +699,13 @@ async function persistParsedArtifact(
       page_count: artifact.pages.length,
       parsed_artifact: artifact,
       parsed_at: new Date().toISOString(),
+      processing_lease_id: null,
+      processing_lease_expires_at: null,
       error_message: null,
     })
     .eq("id", document.id)
     .eq("state", "parsing")
+    .eq("processing_lease_id", leaseId)
     .select()
     .single();
 
@@ -718,22 +722,34 @@ async function markImportDocumentFailed(
   supabase: ServerSupabase,
   documentId: string,
   fromState: "parsing" | "extracting",
+  leaseId: string,
   message: string,
   pageCount: number | null
 ): Promise<void> {
-  const { error } = await supabase
+  const { data: failedRow, error } = await supabase
     .from("import_documents")
     .update({
       state: "failed",
       page_count: pageCount,
+      processing_lease_id: null,
+      processing_lease_expires_at: null,
       error_message: message,
     })
     .eq("id", documentId)
-    .eq("state", fromState);
+    .eq("state", fromState)
+    .eq("processing_lease_id", leaseId)
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     throw new Error(
       `Échec extraction (${message}) et état impossible à persister : ${error.message}`
+    );
+  }
+
+  if (!failedRow) {
+    throw new Error(
+      `Échec extraction (${message}) mais le lease du document a été perdu : aucune autre écriture n'est autorisée`
     );
   }
 }
@@ -742,6 +758,7 @@ async function persistOrLoadParsedArtifact(
   supabase: ServerSupabase,
   document: DatabaseImportDocument,
   sourceState: "uploaded" | "parsed",
+  leaseId: string,
   bytes: Uint8Array | null
 ): Promise<{ document: DatabaseImportDocument; artifact: ImportParsedArtifact; bytes: Uint8Array | null }> {
   if (sourceState === "parsed") {
@@ -778,6 +795,7 @@ async function persistOrLoadParsedArtifact(
       })
       .eq("id", document.id)
       .eq("state", "extracting")
+      .eq("processing_lease_id", leaseId)
       .select()
       .single();
 
@@ -811,6 +829,7 @@ async function persistOrLoadParsedArtifact(
       supabase,
       document.id,
       "parsing",
+      leaseId,
       message,
       local.pages.length
     );
@@ -820,7 +839,8 @@ async function persistOrLoadParsedArtifact(
   const parsedDocument = await persistParsedArtifact(
     supabase,
     document,
-    local.artifact
+    local.artifact,
+    leaseId
   );
 
   return {
@@ -864,48 +884,41 @@ export async function materializeImportDocument(
   }
 
   const claimFrom = document.state;
-  const claimTo =
-    claimFrom === "uploaded"
-      ? "parsing"
-      : claimFrom === "parsed"
-        ? "extracting"
-        : null;
+  let claimed: unknown = null;
+  let claimError: { message: string } | null = null;
 
-  if (!claimTo) {
+  if (claimFrom === "uploaded") {
+    const result = await supabase.rpc(
+      "claim_import_parsing_lease",
+      { p_document_id: document.id }
+    );
+    claimed = result.data;
+    claimError = result.error;
+  } else if (claimFrom === "parsed") {
+    const result = await supabase.rpc(
+      "claim_import_extraction_slot",
+      { p_document_id: document.id }
+    );
+    claimed = result.data;
+    claimError = result.error;
+  } else {
     throw new Error(
       `Extraction déjà en cours ou état non rejouable (${document.state})`
     );
   }
 
-  if (claimFrom === "parsed") {
-    const { data: claimed, error: claimError } = await supabase.rpc(
-      "claim_import_extraction_slot",
-      { p_document_id: document.id }
+  if (claimError || !claimed) {
+    throw new Error(
+      `Document déjà pris en charge ou impossible à réserver : ${claimError?.message ?? "claim refusé"}`
     );
+  }
 
-    if (claimError || !claimed) {
-      throw new Error(
-        `Réservation de l'extraction impossible: ${claimError?.message ?? "claim refusé"}`
-      );
-    }
-
-    document = claimed as DatabaseImportDocument;
-  } else {
-    const { data: claimed, error: claimError } = await supabase
-      .from("import_documents")
-      .update({ state: claimTo, error_message: null })
-      .eq("id", document.id)
-      .eq("state", claimFrom)
-      .select()
-      .single();
-
-    if (claimError || !claimed) {
-      throw new Error(
-        `Document déjà pris en charge ou impossible à réserver : ${claimError?.message ?? "claim refusé"}`
-      );
-    }
-
-    document = claimed as DatabaseImportDocument;
+  document = claimed as DatabaseImportDocument;
+  let leaseId = document.processing_lease_id;
+  if (!leaseId) {
+    throw new Error(
+      "Réservation d'extraction invalide : aucun lease serveur n'a été fourni"
+    );
   }
 
   let artifact: ImportParsedArtifact;
@@ -916,28 +929,66 @@ export async function materializeImportDocument(
       supabase,
       document,
       claimFrom as "uploaded" | "parsed",
+      leaseId,
       bytes
     );
     document = prepared.document;
     artifact = prepared.artifact;
     bytes = prepared.bytes;
-  } catch (error) {
-    const message = (error as Error).message;
-    if (document.state === "parsing") {
-      // persistOrLoadParsedArtifact already persists a normal parse failure;
-      // this branch only handles transport/DB errors before that point.
-      const { error: failError } = await supabase
-        .from("import_documents")
-        .update({ state: "failed", error_message: message })
-        .eq("id", document.id)
-        .eq("state", "parsing");
-      if (failError) {
+
+    // Une passe uploaded→parsing ne conserve jamais le lease de lecture pour
+    // la phase IA : celle-ci obtient un nouveau lease sous le plafond serveur.
+    if (claimFrom === "uploaded") {
+      const result = await supabase.rpc(
+        "claim_import_extraction_slot",
+        { p_document_id: document.id }
+      );
+      if (result.error || !result.data) {
         throw new Error(
-          `Extraction échouée (${message}) et état impossible à persister : ${failError.message}`
+          `Réservation de l'extraction impossible après lecture locale : ${result.error?.message ?? "claim refusé"}`
+        );
+      }
+      document = result.data as DatabaseImportDocument;
+      leaseId = document.processing_lease_id;
+      if (!leaseId) {
+        throw new Error(
+          "Réservation d'extraction invalide après lecture locale : aucun lease serveur"
         );
       }
     }
-    throw new Error(message);
+  } catch (error) {
+    const originalError =
+      error instanceof Error ? error : new Error(String(error));
+
+    if (document.state === "parsing") {
+      // Une erreur locale peut déjà avoir été durablement enregistrée par
+      // persistOrLoadParsedArtifact. Le fallback ne touche la ligne que si
+      // elle est encore exactement sous notre lease de lecture.
+      const { error: failError } = await supabase
+        .from("import_documents")
+        .update({
+          state: "failed",
+          processing_lease_id: null,
+          processing_lease_expires_at: null,
+          error_message: originalError.message,
+        })
+        .eq("id", document.id)
+        .eq("state", "parsing")
+        .eq("processing_lease_id", leaseId);
+
+      if (failError) {
+        throw new Error(
+          "Extraction échouée (" +
+            originalError.message +
+            ") et état impossible à persister : " +
+            failError.message
+        );
+      }
+      // 0 ligne modifiée est volontairement non fatal : cela signifie que le
+      // lease a déjà été libéré, remplacé, ou que l'erreur était déjà persistée.
+    }
+
+    throw originalError;
   }
 
   // Après parsed, seule la structuration IA est reprise. Pour les documents
@@ -978,21 +1029,31 @@ export async function materializeImportDocument(
         );
 
       if (retryable) {
-        const { error: releaseError } = await supabase
+        const { data: released, error: releaseError } = await supabase
           .from("import_documents")
           .update({
             state: "parsed",
             page_count: extracted.pages.length,
             parsed_artifact: artifact,
             parsed_at: new Date().toISOString(),
+            processing_lease_id: null,
+            processing_lease_expires_at: null,
             error_message: message,
           })
           .eq("id", document.id)
-          .eq("state", "extracting");
+          .eq("state", "extracting")
+          .eq("processing_lease_id", leaseId)
+          .select("id")
+          .maybeSingle();
 
         if (releaseError) {
           throw new Error(
             `Extraction refusée (${message}) et état impossible à persister : ${releaseError.message}`
+          );
+        }
+        if (!released) {
+          throw new Error(
+            `Extraction refusée (${message}) mais le lease d'extraction a été perdu : aucune autre écriture n'est autorisée`
           );
         }
       } else {
@@ -1000,6 +1061,7 @@ export async function materializeImportDocument(
           supabase,
           document.id,
           "extracting",
+          leaseId,
           message,
           extracted.pages.length
         );
@@ -1023,25 +1085,36 @@ export async function materializeImportDocument(
         p_document_id: document.id,
         p_candidates: candidates,
         p_page_count: extracted.pages.length,
+        p_lease_id: leaseId,
       }
     );
 
     if (error) {
-      const { error: releaseError } = await supabase
+      const { data: released, error: releaseError } = await supabase
         .from("import_documents")
         .update({
           state: "parsed",
           page_count: extracted.pages.length,
           parsed_artifact: artifact,
           parsed_at: new Date().toISOString(),
+          processing_lease_id: null,
+          processing_lease_expires_at: null,
           error_message: `Matérialisation impossible: ${error.message}`,
         })
         .eq("id", document.id)
-        .eq("state", "extracting");
+        .eq("state", "extracting")
+        .eq("processing_lease_id", leaseId)
+        .select("id")
+        .maybeSingle();
 
       if (releaseError) {
         throw new Error(
           `Erreur matérialisation transactionnelle: ${error.message}. Libération du document impossible: ${releaseError.message}`
+        );
+      }
+      if (!released) {
+        throw new Error(
+          `Erreur matérialisation transactionnelle: ${error.message}. Lease d'extraction perdu : aucune autre écriture n'est autorisée`
         );
       }
 
@@ -1058,6 +1131,33 @@ export async function materializeImportDocument(
   }
 }
 
+
+// Reprise liveness — PostgreSQL décide si le lease est expiré et fence l'ancien worker.
+export async function recoverStaleImportDocument(
+  documentId: string
+): Promise<DatabaseImportDocument> {
+  uuidSchema.parse(documentId);
+
+  const supabase = await createServerSupabase();
+  await requireAuth(supabase);
+
+  const document = await fetchDocument(supabase, documentId);
+  await requireManagerRole(supabase, document.organization_id);
+
+  const { data, error } = await supabase.rpc(
+    "recover_stale_import_document",
+    { p_document_id: document.id }
+  );
+
+  if (error || !data) {
+    throw new Error(
+      error?.message ??
+        "Impossible de reprendre le document : aucun état de récupération retourné"
+    );
+  }
+
+  return data as DatabaseImportDocument;
+}
 
 // ---------------------------------------------------------------------------
 // Phase 5B — Matching + revue utilisateur

@@ -179,6 +179,8 @@ export interface DatabaseImportDocument {
   page_count: number | null;
   parsed_artifact: ImportParsedArtifact | null;
   parsed_at: string | null;
+  processing_lease_id: string | null;
+  processing_lease_expires_at: string | null;
   error_message: string | null;
   processed_at: string | null;
   created_at: string;
@@ -227,6 +229,8 @@ export interface ImportDocument {
   pageCount: number | null;
   parsedArtifact: ImportParsedArtifact | null;
   parsedAt: string | null;
+  processingLeaseId: string | null;
+  processingLeaseExpiresAt: string | null;
   errorMessage: string | null;
   processedAt: string | null;
   createdAt: string;
