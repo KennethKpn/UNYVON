@@ -25,6 +25,8 @@ jobs:
       E2E_BASE_URL: http://127.0.0.1:3000
       E2E_ALLOW_REMOTE: "0"
       E2E_ALLOW_AUTO_PROVISION: "0"
+      NOVA_E2E_MOCK: "1"
+      IMPORT_E2E_MOCK: "1"
       CI: "1"
 
     steps:
