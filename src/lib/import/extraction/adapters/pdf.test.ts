@@ -112,3 +112,51 @@ describe("extractPdfPages", () => {
     expect(result.pages[0].text).toBe("Sans arbre");
   });
 });
+
+
+function inlineResourcesPdf(): Uint8Array {
+  const cmap = [
+    "begincmap",
+    "1 begincodespacerange",
+    "<01> <02>",
+    "endcodespacerange",
+    "2 beginbfchar",
+    "<01> <0041>",
+    "<02> <0042>",
+    "endbfchar",
+    "endcmap",
+  ].join("\n");
+
+  const content = "BT /F1 12 Tf <01> Tj T* <02> Tj ET";
+
+  return pdfFromObjects([
+    "1 0 obj <</Type/Catalog/Pages 2 0 R>> endobj",
+    "2 0 obj <</Type/Pages/Kids [3 0 R]/Count 1>> endobj",
+    "3 0 obj <</Type/Page/Parent 2 0 R/Resources <</Font <</F1 4 0 R>>>>/Contents 5 0 R>> endobj",
+    "4 0 obj <</Type/Font/ToUnicode 6 0 R>> endobj",
+    "5 0 obj <</Length " + content.length + ">> stream\n" + content + "\nendstream endobj",
+    "6 0 obj <</Length " + cmap.length + ">> stream\n" + cmap + "\nendstream endobj",
+  ]);
+}
+
+describe("extractPdfPages — fidélité texte avancée", () => {
+  it("décode une police déclarée inline dans /Resources", () => {
+    const result = extractPdfPages(
+      inlineResourcesPdf(),
+      createDecompressionBudget()
+    );
+
+    expect(result.paginationVerified).toBe(true);
+    expect(result.pages).toHaveLength(1);
+    expect(result.pages[0].text).toBe("A\nB");
+  });
+
+  it("préserve le saut de ligne explicite T* au lieu d'aplatir le texte", () => {
+    const result = extractPdfPages(
+      inlineResourcesPdf(),
+      createDecompressionBudget()
+    );
+
+    expect(result.pages[0].text.split("\n")).toEqual(["A", "B"]);
+  });
+});
