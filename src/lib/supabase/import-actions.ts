@@ -15,6 +15,7 @@ import {
 import {
   IMPORT_TARGET_FIELDS,
   type DatabaseImportDocument,
+  type DatabaseImportErrorDetails,
   type DatabaseImportSession,
   type DatabaseImportItem,
   type ImportDocumentState,
@@ -686,6 +687,34 @@ async function downloadImportDocumentBytes(
   return new Uint8Array(await blob.arrayBuffer());
 }
 
+function providerDetailsForPersistence(
+  extracted: ExtractedDocument
+): DatabaseImportErrorDetails | null {
+  const details = extracted.errors.find((error) => error.provider)?.provider;
+  return details
+    ? {
+        provider: details.provider,
+        model: details.model,
+        category: details.category,
+        retryable: details.retryable,
+        ...(details.status !== undefined ? { status: details.status } : {}),
+        ...(details.providerCode !== undefined
+          ? { providerCode: details.providerCode }
+          : {}),
+        ...(details.retryAfterMs !== undefined
+          ? { retryAfterMs: details.retryAfterMs }
+          : {}),
+        ...(details.requestId !== undefined
+          ? { requestId: details.requestId }
+          : {}),
+      }
+    : null;
+}
+
+function errorCodeForPersistence(extracted: ExtractedDocument): string | null {
+  return extracted.errors[0]?.code ?? null;
+}
+
 async function persistParsedArtifact(
   supabase: ServerSupabase,
   document: DatabaseImportDocument,
@@ -701,6 +730,8 @@ async function persistParsedArtifact(
       parsed_at: new Date().toISOString(),
       processing_lease_id: null,
       processing_lease_expires_at: null,
+      error_code: null,
+      error_details: null,
       error_message: null,
     })
     .eq("id", document.id)
@@ -724,7 +755,9 @@ async function markImportDocumentFailed(
   fromState: "parsing" | "extracting",
   leaseId: string,
   message: string,
-  pageCount: number | null
+  pageCount: number | null,
+  errorCode: string | null = null,
+  errorDetails: DatabaseImportErrorDetails | null = null
 ): Promise<void> {
   const { data: failedRow, error } = await supabase
     .from("import_documents")
@@ -733,6 +766,8 @@ async function markImportDocumentFailed(
       page_count: pageCount,
       processing_lease_id: null,
       processing_lease_expires_at: null,
+      error_code: errorCode,
+      error_details: errorDetails,
       error_message: message,
     })
     .eq("id", documentId)
@@ -791,6 +826,8 @@ async function persistOrLoadParsedArtifact(
         page_count: local.artifact.pages.length,
         parsed_artifact: local.artifact,
         parsed_at: new Date().toISOString(),
+        error_code: null,
+        error_details: null,
         error_message: null,
       })
       .eq("id", document.id)
@@ -831,7 +868,9 @@ async function persistOrLoadParsedArtifact(
       "parsing",
       leaseId,
       message,
-      local.pages.length
+      local.pages.length,
+      local.errors[0]?.code ?? null,
+      null
     );
     throw new Error(message);
   }
@@ -1020,10 +1059,9 @@ export async function materializeImportDocument(
       const message = `Extraction refusée avant matérialisation: ${detail} ${diagnostics}`;
 
       const retryable =
-        extracted.status === "PARTIAL" ||
+        extracted.errors.some((error) => error.provider?.retryable === true) ||
         extracted.errors.some(
           (error) =>
-            error.code === "PROVIDER_ERROR" ||
             error.code === "NO_PROVIDER" ||
             error.code === "INVALID_OUTPUT"
         );
@@ -1038,6 +1076,8 @@ export async function materializeImportDocument(
             parsed_at: new Date().toISOString(),
             processing_lease_id: null,
             processing_lease_expires_at: null,
+            error_code: errorCodeForPersistence(extracted),
+            error_details: providerDetailsForPersistence(extracted),
             error_message: message,
           })
           .eq("id", document.id)
@@ -1063,7 +1103,9 @@ export async function materializeImportDocument(
           "extracting",
           leaseId,
           message,
-          extracted.pages.length
+          extracted.pages.length,
+          errorCodeForPersistence(extracted),
+          providerDetailsForPersistence(extracted)
         );
       }
 
@@ -1099,6 +1141,8 @@ export async function materializeImportDocument(
           parsed_at: new Date().toISOString(),
           processing_lease_id: null,
           processing_lease_expires_at: null,
+          error_code: "MATERIALIZATION_ERROR",
+          error_details: null,
           error_message: `Matérialisation impossible: ${error.message}`,
         })
         .eq("id", document.id)
