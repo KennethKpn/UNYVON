@@ -23,21 +23,16 @@ begin
   into v_definition;
 
   if v_definition is null then
-    raise exception 'RPC materialize_import_document(uuid,jsonb,integer,uuid) absente';
+    raise exception
+      'RPC materialize_import_document(uuid,jsonb,integer,uuid) absente';
   end if;
 
+  -- Idempotence : une base déjà corrigée ne doit subir aucune réécriture.
   if position('stock_quantity' in v_definition) > 0 then
     return;
   end if;
 
-  if position(
-    '''min_stock_threshold'', ''category'''
-    in v_definition
-  ) = 0 then
-    raise exception
-      'Contrat product inattendu dans materialize_import_document(uuid,jsonb,integer,uuid)';
-  end if;
-
+  -- Le remplacement tolère les espaces/newlines générés par PostgreSQL.
   v_updated := pg_catalog.regexp_replace(
     v_definition,
     '''min_stock_threshold''[[:space:]]*,[[:space:]]*''category''',
