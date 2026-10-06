@@ -31,7 +31,7 @@ function inlineDictionaryValueBody(body: string, key: string): string | null {
   if (!match) return null;
 
   const valueStart = (match.index ?? 0) + match[0].length;
-  const offset = body.slice(valueStart).search(/\\S/);
+  const offset = body.slice(valueStart).search(/\S/);
   if (offset < 0) return null;
 
   const absoluteStart = valueStart + offset;
@@ -117,62 +117,3 @@ function collectPageTreeRefs(
 
     const object = objectsByNum.get(ref);
     if (!object) return;
-
-    if (/\/Type\s*\/?Page(?:[\s/]|$)/.test(object.body)) {
-      leaves.push(ref);
-      return;
-    }
-
-    const kids = objectRefs(object.body, "Kids");
-    for (const childRef of kids) visit(childRef, depth + 1);
-  };
-
-  visit(rootRef, 0);
-  return leaves;
-}
-
-function isCompletePageTree(
-  treeRefs: number[],
-  rawPageObjects: PdfObject[]
-): boolean {
-  if (treeRefs.length !== rawPageObjects.length) return false;
-
-  const treeSet = new Set(treeRefs);
-  if (treeSet.size !== treeRefs.length) return false;
-
-  return rawPageObjects.every((page) => treeSet.has(page.num));
-}
-
-function buildFontMaps(
-  pageObject: PdfObject,
-  objectsByNum: Map<number, PdfObject>,
-  budget: DecompressionBudget,
-  cmapCache: Map<number, ToUnicodeMap | null>,
-): FontMap {
-  const resourcesBody = resolveInheritedDictionaryBody(
-    pageObject,
-    "Resources",
-    objectsByNum
-  );
-  if (resourcesBody === null) return new Map();
-
-  const fontDictionaryBody = dictionaryValueBody(
-    resourcesBody,
-    "Font",
-    objectsByNum
-  );
-  if (fontDictionaryBody === null) return new Map();
-
-  const fonts: FontMap = new Map();
-  const fontEntryRe = /\/(F[A-Za-z0-9_.-]+)\s+(\d+)\s+0\s+R/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = fontEntryRe.exec(fontDictionaryBody)) !== null) {
-    const fontObject = objectsByNum.get(Number(match[2]));
-    if (!fontObject) continue;
-
-    const toUnicodeRef = objectRef(fontObject.body, "ToUnicode");
-    if (toUnicodeRef === null) continue;
-
-    let parsed = cmapCache.get(toUnicodeRef);
-    if (parsed === undefined) {
