@@ -14,6 +14,12 @@ interface EntryResult {
 
 function xmlUnescape(text: string): string {
   return text
+    .replace(/&#x([0-9a-f]+);/gi, (_match, value: string) =>
+      String.fromCodePoint(Number.parseInt(value, 16))
+    )
+    .replace(/&#([0-9]+);/g, (_match, value: string) =>
+      String.fromCodePoint(Number.parseInt(value, 10))
+    )
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
@@ -21,15 +27,74 @@ function xmlUnescape(text: string): string {
     .replace(/&amp;/g, "&");
 }
 
-function documentXmlToText(xml: string): string {
-  const paragraphs = xml.split("</w:p>");
-  const lines: string[] = [];
-  for (const paragraph of paragraphs) {
-    const runs = [...paragraph.matchAll(/<w:t[^>]*>([\s\S]*?)<\/w:t>/g)];
-    const line = runs.map((run) => xmlUnescape(run[1])).join("");
-    if (line.trim()) lines.push(line);
+function inlineXmlToText(xml: string): string {
+  const parts: string[] = [];
+  const tokenRe =
+    /<w:t\b[^>]*>([\s\S]*?)<\/w:t>|<w:tab\b[^>]*\/\s*>|<w:br\b[^>]*\/\s*>|<w:cr\b[^>]*\/\s*>/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = tokenRe.exec(xml)) !== null) {
+    if (match[1] !== undefined) {
+      parts.push(xmlUnescape(match[1]));
+    } else if (match[0].startsWith("<w:tab")) {
+      parts.push("\t");
+    } else {
+      parts.push("\n");
+    }
   }
-  return lines.join("\n");
+
+  return parts.join("");
+}
+
+function paragraphsXmlToText(xml: string): string {
+  const paragraphs = [...xml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)];
+  return paragraphs
+    .map((match) => inlineXmlToText(match[0]).replace(/[ \t\r\n]+$/g, ""))
+    .filter((line) => line.trim())
+    .join("\n");
+}
+
+function tableXmlToText(xml: string): string {
+  const rows = [...xml.matchAll(/<w:tr\b[\s\S]*?<\/w:tr>/g)];
+  return rows
+    .map((row) => {
+      const cells = [...row[0].matchAll(/<w:tc\b[\s\S]*?<\/w:tc>/g)];
+      return cells
+        .map((cell) =>
+          paragraphsXmlToText(cell[0])
+            .replace(/\r?\n/g, " / ")
+            .trim()
+        )
+        .join("\t");
+    })
+    .filter((row) => row.trim())
+    .join("\n");
+}
+
+function documentXmlToText(xml: string): string {
+  // Les tableaux sont des blocs documentaires à part entière : leur
+  // séparation cellule/ligne est conservée plutôt que de concaténer tous les
+  // w:t comme une simple phrase. Cela permet à la structuration IA de voir les
+  // colonnes et lignes d'un catalogue ou d'une facture.
+  const blocks: string[] = [];
+  const tableRe = /<w:tbl\b[\s\S]*?<\/w:tbl>/g;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = tableRe.exec(xml)) !== null) {
+    const before = paragraphsXmlToText(xml.slice(cursor, match.index));
+    if (before) blocks.push(before);
+
+    const table = tableXmlToText(match[0]);
+    if (table) blocks.push(table);
+
+    cursor = match.index + match[0].length;
+  }
+
+  const after = paragraphsXmlToText(xml.slice(cursor));
+  if (after) blocks.push(after);
+
+  return blocks.join("\n").trim();
 }
 
 function findEntry(
