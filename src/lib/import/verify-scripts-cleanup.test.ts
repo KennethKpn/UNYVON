@@ -279,3 +279,35 @@ describe("Smart Import — migrations de vivacité et d'autorité d'état", () =
     expect(reviewLiveness).not.toMatch(/security\s+definer/i);
   });
 });
+
+describe("Smart Import — capacité d'extraction IA", () => {
+  const capacity = readFileSync(
+    path.join(SUPABASE_DIR, "migrations", "0026_import_extraction_capacity.sql"),
+    "utf8"
+  );
+
+  it("garde la limite de concurrence côté PostgreSQL, pas côté client", () => {
+    expect(capacity).toContain("pg_advisory_xact_lock");
+    expect(capacity).toContain("v_limit constant integer := 2");
+    expect(capacity).toContain("state = 'extracting'");
+    expect(capacity).toContain("CAPACITE_EXTRACTION_ATTEINTE");
+  });
+
+  it("ne rend pas la réservation SECURITY DEFINER", () => {
+    expect(capacity).not.toMatch(/security\s+definer/i);
+    expect(capacity).toMatch(/security\s+invoker/i);
+  });
+
+  it("ne laisse pas le client choisir la limite", () => {
+    expect(capacity).not.toMatch(/p_max_concurrency/i);
+  });
+
+  it("protège la fonction des appels anonymes", () => {
+    expect(capacity).toContain(
+      "revoke execute on function public.claim_import_extraction_slot(uuid) from public, anon;"
+    );
+    expect(capacity).toContain(
+      "grant execute on function public.claim_import_extraction_slot(uuid) to authenticated;"
+    );
+  });
+});
