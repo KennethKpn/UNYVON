@@ -296,12 +296,18 @@ export async function prepareImportDocumentReupload(input: {
     .eq("id", document.id)
     .eq("organization_id", document.organization_id)
     .eq("state", "failed")
+    .eq("updated_at", document.updated_at)
     .select()
-    .single();
+    .maybeSingle();
 
-  if (updateError || !updated) {
+  if (updateError) {
     throw new Error(
-      `Erreur préparation du réupload: ${updateError?.message ?? "aucune ligne mise à jour"}`
+      `Erreur préparation du réupload: ${updateError.message}`
+    );
+  }
+  if (!updated) {
+    throw new Error(
+      "Document modifié en parallèle : réupload annulé pour protéger son nouvel état"
     );
   }
 
@@ -382,15 +388,23 @@ export async function retryImportDocument(
     );
   }
 
-  const { error: firstUpdateError } = await supabase
+  const { data: uploading, error: firstUpdateError } = await supabase
     .from("import_documents")
     .update({ state: "uploading", error_message: null })
     .eq("id", document.id)
-    .eq("state", "failed");
+    .eq("state", "failed")
+    .eq("updated_at", document.updated_at)
+    .select()
+    .maybeSingle();
 
   if (firstUpdateError) {
     throw new Error(
       `Erreur reprise du document d'import: ${firstUpdateError.message}`
+    );
+  }
+  if (!uploading) {
+    throw new Error(
+      "Document modifié en parallèle : reprise annulée pour protéger son nouvel état"
     );
   }
 
@@ -399,12 +413,18 @@ export async function retryImportDocument(
     .update({ state: "uploaded", error_message: null })
     .eq("id", document.id)
     .eq("state", "uploading")
+    .eq("updated_at", (uploading as DatabaseImportDocument).updated_at)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     throw new Error(
       `Document remis en attente d'upload: ${error.message}`
+    );
+  }
+  if (!data) {
+    throw new Error(
+      "Document modifié en parallèle : finalisation de la reprise annulée"
     );
   }
 
