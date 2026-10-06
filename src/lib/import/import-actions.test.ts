@@ -166,11 +166,12 @@ const h = vi.hoisted(() => {
       if (st.op === "delete") {
         if (db.deleteError) return { data: null, error: { message: db.deleteError } };
         const tableRows = TABLES[table] ?? [];
-        const toRemove = new Set(selectedRows());
+        const selected = selectedRows();
+        const toRemove = new Set(selected);
         for (let i = tableRows.length - 1; i >= 0; i--) {
           if (toRemove.has(tableRows[i])) tableRows.splice(i, 1);
         }
-        return { data: [], error: null };
+        return { data: selected, error: null };
       }
       return { data: selectedRows(), error: null };
     }
