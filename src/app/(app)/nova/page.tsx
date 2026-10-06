@@ -45,6 +45,8 @@ export default function NovaPage() {
   const [error, setError] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const conversationIdRef = useRef<string | null>(null);
+  const pendingConversationRef = useRef<Promise<string> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,6 +68,7 @@ export default function NovaPage() {
       }
 
       setConversationId(latest.conversationId);
+      conversationIdRef.current = latest.conversationId;
       setTitle(latest.title);
 
       const history = await getNovaMessagesAction(latest.conversationId);
@@ -96,17 +99,36 @@ export default function NovaPage() {
     if (sending) return;
 
     setError("");
-    const result = await createNovaConversationAction();
-
-    if (!result.ok) {
-      setError(result.error);
-      return;
-    }
-
-    setConversationId(result.conversationId);
+    setConversationId(null);
+    conversationIdRef.current = null;
     setTitle(null);
     setMessages([]);
-    inputRef.current?.focus();
+
+    const creation = createNovaConversationAction().then((result) => {
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+      return result.conversationId;
+    });
+
+    pendingConversationRef.current = creation;
+
+    try {
+      const newConversationId = await creation;
+      conversationIdRef.current = newConversationId;
+      setConversationId(newConversationId);
+      inputRef.current?.focus();
+    } catch (creationError) {
+      setError(
+        creationError instanceof Error
+          ? creationError.message
+          : "Impossible de créer une conversation NOVA"
+      );
+    } finally {
+      if (pendingConversationRef.current === creation) {
+        pendingConversationRef.current = null;
+      }
+    }
   };
 
   const send = async (event?: FormEvent) => {
@@ -128,7 +150,29 @@ export default function NovaPage() {
 
     setMessages((current) => [...current, optimistic]);
 
-    const result = await sendNovaMessageAction(conversationId, message);
+    let targetConversationId = conversationIdRef.current;
+
+    if (!targetConversationId && pendingConversationRef.current) {
+      try {
+        targetConversationId = await pendingConversationRef.current;
+        conversationIdRef.current = targetConversationId;
+        setConversationId(targetConversationId);
+      } catch (creationError) {
+        setError(
+          creationError instanceof Error
+            ? creationError.message
+            : "Impossible de créer une conversation NOVA"
+        );
+        setSending(false);
+        setMessages((current) =>
+          current.filter((item) => item.id !== optimistic.id)
+        );
+        setInput(message);
+        return;
+      }
+    }
+
+    const result = await sendNovaMessageAction(targetConversationId, message);
 
     if (!result.ok) {
       setError(result.error);
@@ -140,6 +184,7 @@ export default function NovaPage() {
       return;
     }
 
+    conversationIdRef.current = result.conversationId;
     setConversationId(result.conversationId);
     if (!title) setTitle(message.slice(0, 80));
 
