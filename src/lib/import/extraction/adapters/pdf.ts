@@ -139,12 +139,59 @@ function objectRefs(body: string, key: string): number[] {
   );
 }
 
-function resolveInheritedRef(
+function inlineDictionaryAt(source: string, start: number): string | null {
+  if (source.slice(start, start + 2) !== "<<") return null;
+
+  let depth = 0;
+  for (let index = start; index < source.length - 1; index += 1) {
+    if (source[index] === "<" && source[index + 1] === "<") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (source[index] === ">" && source[index + 1] === ">") {
+      depth -= 1;
+      if (depth === 0) return source.slice(start + 2, index);
+      index += 1;
+    }
+  }
+
+  return null;
+}
+
+function dictionaryValueBody(
+  body: string,
+  key: string,
+  objectsByNum: Map<number, PdfObject>
+): string | null {
+  const keyRe = new RegExp("/" + key + "\\s+");
+  const match = keyRe.exec(body);
+  if (!match) return null;
+
+  const valueStart = (match.index ?? 0) + match[0].length;
+  const tail = body.slice(valueStart);
+  const refMatch = tail.match(/^(\\d+)\\s+0\\s+R/);
+  if (refMatch) {
+    const object = objectsByNum.get(Number(refMatch[1]));
+    return object?.body ?? null;
+  }
+
+  const offset = tail.search(/\\S/);
+  if (offset < 0) return null;
+  const absoluteStart = valueStart + offset;
+  if (body.slice(absoluteStart, absoluteStart + 2) === "<<") {
+    return inlineDictionaryAt(body, absoluteStart);
+  }
+
+  return null;
+}
+
+function resolveInheritedDictionary(
   object: PdfObject,
   key: string,
   objectsByNum: Map<number, PdfObject>,
   maxDepth = 64
-): number | null {
+): string | null {
   const visited = new Set<number>();
   let current: PdfObject | undefined = object;
 
@@ -152,8 +199,8 @@ function resolveInheritedRef(
     if (visited.has(current.num)) return null;
     visited.add(current.num);
 
-    const ref = objectRef(current.body, key);
-    if (ref !== null) return ref;
+    const value = dictionaryValueBody(current.body, key, objectsByNum);
+    if (value !== null) return value;
 
     const parentRef = objectRef(current.body, "Parent");
     if (parentRef === null) return null;
@@ -209,17 +256,19 @@ function buildFontMaps(
   budget: DecompressionBudget,
   cmapCache: Map<number, ToUnicodeMap | null>,
 ): FontMap {
-  const resourcesRef = resolveInheritedRef(pageObject, "Resources", objectsByNum);
-  if (resourcesRef === null) return new Map();
+  const resourcesBody = resolveInheritedDictionary(
+    pageObject,
+    "Resources",
+    objectsByNum
+  );
+  if (resourcesBody === null) return new Map();
 
-  const resources = objectsByNum.get(resourcesRef);
-  if (!resources) return new Map();
-
-  const fontRef = objectRef(resources.body, "Font");
-  if (fontRef === null) return new Map();
-
-  const fontDictionary = objectsByNum.get(fontRef);
-  if (!fontDictionary) return new Map();
+  const fontDictionaryBody = dictionaryValueBody(
+    resourcesBody,
+    "Font",
+    objectsByNum
+  );
+  if (fontDictionaryBody === null) return new Map();
 
   const fonts: FontMap = new Map();
   const fontEntryRe = /\/(F[A-Za-z0-9_.-]+)\s+(\d+)\s+0\s+R/g;
