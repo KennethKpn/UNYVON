@@ -254,11 +254,14 @@ describe("Smart Import — migrations de vivacité et d'autorité d'état", () =
     expect(stateGate).toContain("execute v_definition");
   });
 
-  it("injecte le garde de session AVANT le retour idempotent extracted", () => {
+  it("construit un corps de fonction où le garde de session précède le retour idempotent", () => {
     const guard = "  if v_session.state not in (''processing'', ''needs_review'') then";
     const idempotence = "  if v_document.state = ''extracted'' then";
-    const guardIndex = stateGate.indexOf(guard);
-    const idempotenceIndex = stateGate.indexOf(idempotence);
+    const afterIndex = stateGate.indexOf("v_after text :=");
+    const afterBody = stateGate.slice(afterIndex);
+    const guardIndex = afterBody.indexOf(guard);
+    const idempotenceIndex = afterBody.indexOf(idempotence);
+    expect(afterIndex).toBeGreaterThan(-1);
     expect(guardIndex).toBeGreaterThan(-1);
     expect(idempotenceIndex).toBeGreaterThan(-1);
     expect(guardIndex).toBeLessThan(idempotenceIndex);
@@ -268,7 +271,7 @@ describe("Smart Import — migrations de vivacité et d'autorité d'état", () =
     expect(reviewLiveness).toMatch(
       /from\s+public\.import_documents\s+d[\s\S]{0,800}d\.state\s+<>\s+'extracted'/i
     );
-    expect(reviewLiveness).toContain("Tous les documents doivent être extraits");
+    expect(reviewLiveness).toContain("Tous les documents doivent être extracted");
   });
 
   it("ne transforme aucune de ces migrations en fonction SECURITY DEFINER", () => {
