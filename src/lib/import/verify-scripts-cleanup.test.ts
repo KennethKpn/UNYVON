@@ -383,3 +383,57 @@ describe("Smart Import — liveness des leases d'extraction", () => {
     );
   });
 });
+
+
+describe("Smart Import — persistance des erreurs fournisseur", () => {
+  const errorMigration = readFileSync(
+    path.join(
+      SUPABASE_DIR,
+      "migrations",
+      "20261006033500_import_error_details.sql"
+    ),
+    "utf8"
+  );
+  const actions = readFileSync(
+    path.join(process.cwd(), "src/lib/supabase/import-actions.ts"),
+    "utf8"
+  );
+
+  it("sépare le code machine et les détails structurés du message utilisateur", () => {
+    expect(errorMigration).toContain("add column if not exists error_code text");
+    expect(errorMigration).toContain("add column if not exists error_details jsonb");
+    expect(errorMigration).toContain(
+      "jsonb_typeof(error_details) = 'object'"
+    );
+    expect(actions).toContain("error_code: errorCodeForPersistence(extracted)");
+    expect(actions).toContain(
+      "error_details: providerDetailsForPersistence(extracted)"
+    );
+  });
+
+  it("ne persiste que les attributs fournisseur autorisés", () => {
+    expect(actions).toContain("provider: details.provider");
+    expect(actions).toContain("model: details.model");
+    expect(actions).toContain("category: details.category");
+    expect(actions).toContain("retryable: details.retryable");
+    expect(actions).toContain("providerCode: details.providerCode");
+    expect(actions).toContain("retryAfterMs: details.retryAfterMs");
+    expect(actions).toContain("requestId: details.requestId");
+    expect(actions).not.toContain("details.apiKey");
+    expect(actions).not.toContain("details.headers");
+  });
+
+  it("détermine le retry à partir de retryable plutôt que d'un nom de code générique", () => {
+    expect(actions).toContain(
+      "extracted.errors.some((error) => error.provider?.retryable === true)"
+    );
+    expect(actions).not.toContain(
+      'error.code === "PROVIDER_ERROR"'
+    );
+  });
+
+  it("efface les diagnostics structurés quand l'étape repasse dans un état sain", () => {
+    expect(actions).toContain("error_code: null");
+    expect(actions).toContain("error_details: null");
+  });
+});
