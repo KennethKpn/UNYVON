@@ -699,6 +699,8 @@ async function persistParsedArtifact(
       page_count: artifact.pages.length,
       parsed_artifact: artifact,
       parsed_at: new Date().toISOString(),
+      processing_lease_id: null,
+      processing_lease_expires_at: null,
       error_message: null,
     })
     .eq("id", document.id)
@@ -906,7 +908,7 @@ export async function materializeImportDocument(
   }
 
   document = claimed as DatabaseImportDocument;
-  const leaseId = document.processing_lease_id;
+  let leaseId = document.processing_lease_id;
   if (!leaseId) {
     throw new Error(
       "Réservation d'extraction invalide : aucun lease serveur n'a été fourni"
@@ -927,6 +929,27 @@ export async function materializeImportDocument(
     document = prepared.document;
     artifact = prepared.artifact;
     bytes = prepared.bytes;
+
+    // Une passe uploaded→parsing ne conserve jamais le lease de lecture pour
+    // la phase IA : celle-ci obtient un nouveau lease sous le plafond serveur.
+    if (claimFrom === "uploaded") {
+      const result = await supabase.rpc(
+        "claim_import_extraction_slot",
+        { p_document_id: document.id }
+      );
+      if (result.error || !result.data) {
+        throw new Error(
+          `Réservation de l'extraction impossible après lecture locale : ${result.error?.message ?? "claim refusé"}`
+        );
+      }
+      document = result.data as DatabaseImportDocument;
+      leaseId = document.processing_lease_id;
+      if (!leaseId) {
+        throw new Error(
+          "Réservation d'extraction invalide après lecture locale : aucun lease serveur"
+        );
+      }
+    }
   } catch (error) {
     const message = (error as Error).message;
     if (document.state === "parsing") {
