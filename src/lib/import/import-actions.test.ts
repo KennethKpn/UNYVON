@@ -1219,6 +1219,35 @@ describe("review item edit/delete", () => {
     );
     expect(h.db.items).toHaveLength(1);
   });
+
+  it("n'ecrase pas une modification concurrente pendant l'édition d'un item", async () => {
+    h.db.mutationRace = () => {
+      h.db.items[0].status = "ignored";
+    };
+
+    await expect(
+      updateImportItemFields({
+        id: ITEM,
+        values: { name: "Nom concurrent" },
+      })
+    ).rejects.toThrow();
+
+    expect(h.db.items[0].status).toBe("ignored");
+    expect(h.db.items[0].fields.name.raw).toBe("Huile");
+  });
+
+  it("n'efface pas un item modifié concurrentement pendant la suppression", async () => {
+    h.db.mutationRace = () => {
+      h.db.items[0].status = "imported";
+    };
+
+    await expect(deleteImportItem(ITEM)).rejects.toThrow(
+      "Item modifié en parallèle"
+    );
+
+    expect(h.db.items).toHaveLength(1);
+    expect(h.db.items[0].status).toBe("imported");
+  });
 });
 
 describe("getImportDocuments", () => {
@@ -1263,6 +1292,16 @@ describe("cancelImportSession", () => {
       "Transition d'état non autorisée"
     );
     expect(h.db.sessions[0].state).toBe("completed");
+  });
+
+  it("n'annule pas une session dont l'état a changé concurrentement", async () => {
+    h.db.mutationRace = () => {
+      h.db.sessions[0].state = "processing";
+    };
+
+    await expect(cancelImportSession(h.SESSION)).rejects.toThrow();
+
+    expect(h.db.sessions[0].state).toBe("processing");
   });
 
   it("rejette un rôle hors owner/manager", async () => {
