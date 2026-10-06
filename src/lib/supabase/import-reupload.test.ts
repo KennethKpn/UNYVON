@@ -12,6 +12,7 @@ const state = vi.hoisted(() => {
   role: "owner" as string | null,
   updateError: null as string | null,
   storageError: null as string | null,
+  sessionState: "processing" as string,
   documents: [] as Array<Record<string, unknown>>,
   storageObjects: [] as string[],
   storageLists: [] as Array<{ folder: string; search?: string }>,
@@ -24,6 +25,7 @@ function reset() {
   state.role = "owner";
   state.updateError = null;
   state.storageError = null;
+  state.sessionState = "processing";
   state.storageObjects = [];
   state.storageLists = [];
   state.updates = [];
@@ -62,6 +64,9 @@ function builder(table: string) {
     eq(column: string, value: unknown) { filters.push([column, value]); return api; },
     limit() { return api; },
     maybeSingle() {
+      if (table === "import_sessions" && filters.some(([column, value]) => column === "id" && value === SESSION)) {
+        return Promise.resolve({ data: { id: SESSION, state: state.sessionState }, error: null });
+      }
       if (table !== "import_documents") return Promise.resolve({ data: null, error: null });
       const row = state.documents.find((candidate) =>
         filters.every(([column, value]) => candidate[column] === value)
@@ -130,7 +135,7 @@ vi.mock("@/lib/supabase/server", () => ({
   createServerSupabase: async () => supabase,
 }));
 
-import { prepareImportDocumentReupload } from "./import-review-actions";
+import { prepareImportDocumentReupload, retryImportDocument } from "./import-review-actions";
 
 beforeEach(reset);
 
@@ -198,6 +203,31 @@ describe("prepareImportDocumentReupload", () => {
     ).rejects.toThrow("Réupload autorisé uniquement depuis l'état 'failed'");
     expect(state.updates).toHaveLength(0);
     expect(state.storageLists).toHaveLength(0);
+  });
+
+  it("refuse le réupload quand la session n'est plus active", async () => {
+    state.sessionState = "failed";
+
+    await expect(
+      prepareImportDocumentReupload({
+        documentId: DOC,
+        originalName: "scan-corrige.pdf",
+        sourceKind: "pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 2048,
+      })
+    ).rejects.toThrow("Reprise du document impossible depuis l'état de session failed");
+    expect(state.updates).toHaveLength(0);
+  });
+
+  it("refuse aussi la relance d'extraction quand la session n'est plus active", async () => {
+    state.sessionState = "failed";
+    state.storageObjects = [state.documents[0].storage_path as string];
+
+    await expect(retryImportDocument(DOC)).rejects.toThrow(
+      "Reprise du document impossible depuis l'état de session failed"
+    );
+    expect(state.updates).toHaveLength(0);
   });
 
   it("refuse un utilisateur non authentifié", async () => {
