@@ -134,7 +134,7 @@ function objectRefs(body: string, key: string): number[] {
   const arrayMatch = body.match(new RegExp("/" + key + "\\s*\\[([\\s\\S]*?)\\]"));
   if (!arrayMatch) return [];
 
-  return [...arrayMatch[1].matchAll(/(\\d+)\\s+0\\s+R/g)].map((match) =>
+  return [...arrayMatch[1].matchAll(/(\d+)\s+0\s+R/g)].map((match) =>
     Number(match[1])
   );
 }
