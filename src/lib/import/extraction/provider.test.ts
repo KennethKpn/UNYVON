@@ -2,6 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { IMPORT_TARGET_FIELDS } from "../types";
 import {
   createProviderFromConfig,
+  getProviderErrorDetails,
+  ProviderHttpError,
+  ProviderTransportError,
+  ProviderResponseError,
   resolveProviderConfig,
   type Provider,
 } from "./provider";
@@ -478,6 +482,153 @@ describe("résilience fournisseur Gemini", () => {
       part.inline_data?.data === "JVBERi0xLjQ="
     )).toBe(true);
   });
+});
+
+describe("erreurs fournisseur structurées", () => {
+  it("classe une réponse HTTP 401 comme erreur d'authentification sans exposer la clé", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: { code: "INVALID_API_KEY", message: "secret provider text" },
+          }),
+          {
+            status: 401,
+            headers: {
+              "Content-Type": "application/json",
+              "x-request-id": "req-auth-1",
+            },
+          }
+        )
+    );
+
+    const provider = createProviderFromConfig({
+      type: "gemini",
+      apiKey: "AIzaDoNotLeak",
+      model: "gemini-3.6-flash",
+      timeoutMs: 5000,
+    });
+
+    await expect(provider!.parse({ kind: "text", text: "x" })).rejects.toBeInstanceOf(
+      ProviderHttpError
+    );
+
+    try {
+      await provider!.parse({ kind: "text", text: "x" });
+    } catch (error) {
+      const details = getProviderErrorDetails(error);
+      expect(details).toEqual({
+        provider: "gemini",
+        model: "gemini-3.6-flash",
+        category: "auth",
+        retryable: false,
+        status: 401,
+        providerCode: "INVALID_API_KEY",
+        retryAfterMs: undefined,
+        requestId: "req-auth-1",
+      });
+      expect((error as Error).message).not.toContain("AIzaDoNotLeak");
+    }
+  });
+
+  it("conserve la structure d'un rate-limit après épuisement des retries", async () => {
+    vi.useFakeTimers();
+    let calls = 0;
+    stubFetch(
+      () => {
+        calls += 1;
+        return new Response(
+          JSON.stringify({ error: { code: "RESOURCE_EXHAUSTED", message: "busy" } }),
+          {
+            status: 429,
+            headers: { "retry-after": "1" },
+          }
+        );
+      }
+    );
+
+    const provider = createProviderFromConfig({
+      type: "openai",
+      apiKey: "sk-fake",
+      timeoutMs: 5000,
+    });
+
+    const promise = provider!.parse({ kind: "text", text: "x" });
+    const assertion = expect(promise).rejects.toMatchObject({
+      details: {
+        provider: "openai",
+        model: "gpt-4o-mini",
+        category: "rate_limit",
+        retryable: true,
+        status: 429,
+        providerCode: "RESOURCE_EXHAUSTED",
+        retryAfterMs: 1000,
+        requestId: undefined,
+      },
+    });
+
+    await vi.runAllTimersAsync();
+    await assertion;
+    expect(calls).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("classe un échec fetch en erreur réseau retryable", async () => {
+    stubFetch(() => Promise.reject(new TypeError("fetch failed")));
+
+    const provider = createProviderFromConfig({
+      type: "openai",
+      apiKey: "sk-fake",
+      model: "gpt-4o-mini",
+      timeoutMs: 5000,
+    });
+
+    await expect(provider!.parse({ kind: "text", text: "x" })).rejects.toBeInstanceOf(
+      ProviderTransportError
+    );
+    try {
+      await provider!.parse({ kind: "text", text: "x" });
+    } catch (error) {
+      expect(getProviderErrorDetails(error)).toMatchObject({
+        provider: "openai",
+        model: "gpt-4o-mini",
+        category: "network",
+        retryable: true,
+      });
+    }
+  });
+
+  it("classe une réponse fournisseur sans contenu exploitable comme invalid_response", async () => {
+    stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({ choices: [{ message: { content: "" } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+    );
+
+    const provider = createProviderFromConfig({
+      type: "openai",
+      apiKey: "sk-fake",
+      model: "gpt-4o-mini",
+      timeoutMs: 5000,
+    });
+
+    await expect(provider!.parse({ kind: "text", text: "x" })).rejects.toBeInstanceOf(
+      ProviderResponseError
+    );
+    await expect(
+      provider!.parse({ kind: "text", text: "x" })
+    ).rejects.toMatchObject({
+      details: {
+        provider: "openai",
+        model: "gpt-4o-mini",
+        category: "invalid_response",
+        retryable: false,
+      },
+    });
+  });
+
 });
 
 describe("createProviderFromConfig", () => {

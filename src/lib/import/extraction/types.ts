@@ -1,4 +1,5 @@
 import type { ImportFieldProvenance, ImportEntityType } from "../types";
+import type { ProviderErrorDetails } from "./provider";
 
 // ---------------------------------------------------------------------------
 // Contrat d'extraction (Phase 4) — l'extracteur est une source de données :
@@ -16,6 +17,7 @@ export interface ExtractionWarning {
 export interface ExtractionError {
   code: string;
   message: string;
+  provider?: ProviderErrorDetails;
 }
 
 export interface ExtractedPage {

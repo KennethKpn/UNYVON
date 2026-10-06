@@ -29,23 +29,78 @@ export type ProviderConfig = {
   timeoutMs: number;
 };
 
+export type ProviderErrorCategory =
+  | "auth"
+  | "rate_limit"
+  | "timeout"
+  | "network"
+  | "bad_request"
+  | "unavailable"
+  | "invalid_response"
+  | "unsupported"
+  | "unknown";
+
+export interface ProviderErrorDetails {
+  provider: ProviderConfig["type"];
+  model: string;
+  category: ProviderErrorCategory;
+  retryable: boolean;
+  status?: number;
+  providerCode?: string;
+  retryAfterMs?: number;
+  requestId?: string;
+}
+
+type ProviderErrorInit = {
+  details: ProviderErrorDetails;
+  cause?: unknown;
+};
+
 export class ProviderHttpError extends Error {
   readonly status: number;
+  readonly details: ProviderErrorDetails;
 
-  constructor(message: string, status: number) {
-    super(message);
+  constructor(message: string, status: number, init: Omit<ProviderErrorInit, "details"> & {
+    details: Omit<ProviderErrorDetails, "status">;
+  }) {
+    super(message, { cause: init.cause });
     this.name = "ProviderHttpError";
     this.status = status;
+    this.details = { ...init.details, status };
   }
 }
 
 export class ProviderTransportError extends Error {
   readonly retryable = true;
+  readonly details: ProviderErrorDetails;
 
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
+  constructor(message: string, init: Omit<ProviderErrorInit, "details"> & {
+    details: Omit<ProviderErrorDetails, "status">;
+  }) {
+    super(message, { cause: init.cause });
     this.name = "ProviderTransportError";
+    this.details = { ...init.details, retryable: true };
   }
+}
+
+export class ProviderResponseError extends Error {
+  readonly details: ProviderErrorDetails;
+
+  constructor(message: string, init: ProviderErrorInit) {
+    super(message, { cause: init.cause });
+    this.name = "ProviderResponseError";
+    this.details = init.details;
+  }
+}
+
+export function getProviderErrorDetails(error: unknown): ProviderErrorDetails | null {
+  if (error instanceof ProviderHttpError || error instanceof ProviderTransportError) {
+    return error.details;
+  }
+  if (error instanceof ProviderResponseError) {
+    return error.details;
+  }
+  return null;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -412,9 +467,29 @@ async function fetchProvider(
         throw error;
       }
       if (attempt === MAX_TRANSIENT_RETRIES) {
-        const message =
-          error instanceof Error ? error.message : "Erreur réseau du fournisseur IA";
-        throw new ProviderTransportError(message, { cause: error });
+        const isTimeout =
+          error instanceof DOMException &&
+          (error.name === "AbortError" || error.name === "TimeoutError");
+        const transportMessage =
+          isTimeout
+            ? "Le fournisseur IA n'a pas répondu à temps"
+            : error instanceof Error
+              ? error.message
+              : "Impossible de joindre le fournisseur IA";
+        throw new ProviderTransportError(
+          transportMessage,
+          {
+            cause: error,
+            details: {
+              provider: config.type,
+              model:
+                config.model ??
+                (config.type === "gemini" ? GEMINI_MODEL : OPENAI_MODEL),
+              category: isTimeout ? "timeout" : "network",
+              retryable: true,
+            },
+          }
+        );
       }
       const delay = Math.min(
         RETRY_BASE_DELAY_MS * 2 ** attempt,
@@ -427,27 +502,61 @@ async function fetchProvider(
     const data: unknown = await response.json().catch(() => null);
     if (response.ok) return data;
 
-    const message =
+    const providerError =
       data &&
       typeof data === "object" &&
       "error" in data &&
       data.error &&
-      typeof data.error === "object" &&
-      "message" in data.error
-        ? String((data.error as Record<string, unknown>).message)
+      typeof data.error === "object"
+        ? (data.error as Record<string, unknown>)
+        : null;
+    const rawProviderMessage =
+      providerError && "message" in providerError
+        ? String(providerError.message)
         : `Le fournisseur IA a répondu avec une erreur (HTTP ${response.status})`;
-
-    const error = new ProviderHttpError(message, response.status);
-    if (!isTransientStatus(response.status) || attempt === MAX_TRANSIENT_RETRIES) {
+    const providerCode =
+      providerError && "code" in providerError && providerError.code != null
+        ? String(providerError.code)
+        : undefined;
+    const retryAfterMs =
+      parseRetryAfter(response.headers.get("retry-after")) ?? undefined;
+    const category: ProviderErrorCategory =
+      response.status === 401 || response.status === 403
+        ? "auth"
+        : response.status === 429
+          ? "rate_limit"
+          : response.status === 408
+            ? "timeout"
+            : response.status >= 500 && response.status <= 599
+              ? "unavailable"
+              : response.status >= 400 && response.status <= 499
+                ? "bad_request"
+                : "unknown";
+    const requestId =
+      response.headers.get("x-request-id") ??
+      response.headers.get("x-goog-request-id") ??
+      undefined;
+    const retryable = isTransientStatus(response.status);
+    const error = new ProviderHttpError(rawProviderMessage, response.status, {
+      details: {
+        provider: config.type,
+        model: config.model ?? (config.type === "gemini" ? GEMINI_MODEL : OPENAI_MODEL),
+        category,
+        retryable,
+        providerCode,
+        retryAfterMs,
+        requestId,
+      },
+    });
+    if (!retryable || attempt === MAX_TRANSIENT_RETRIES) {
       throw error;
     }
 
-    const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
     const backoff = Math.min(
       RETRY_BASE_DELAY_MS * 2 ** attempt,
       MAX_RETRY_DELAY_MS
     );
-    await sleep(retryAfter ?? backoff);
+    await sleep(retryAfterMs ?? backoff);
   }
 
   throw new Error("Fournisseur IA indisponible");
@@ -467,9 +576,29 @@ async function callProvider(
   for (const model of models) {
     try {
       const response = await fetchProvider({ ...config, model }, request);
-      return toCandidates(
-        parseModelJson(extractTextResponse({ ...config, model }, response))
-      );
+      const responseDetails: ProviderErrorDetails = {
+        provider: config.type,
+        model,
+        category: "invalid_response",
+        retryable: false,
+      };
+      const responseText = extractTextResponse({ ...config, model }, response);
+      if (!responseText.trim()) {
+        throw new ProviderResponseError("Réponse vide du fournisseur IA", {
+          details: responseDetails,
+        });
+      }
+      try {
+        return toCandidates(parseModelJson(responseText));
+      } catch (error) {
+        throw new ProviderResponseError(
+          "Réponse invalide du fournisseur IA : JSON non exploitable",
+          {
+            details: responseDetails,
+            cause: error,
+          }
+        );
+      }
     } catch (error) {
       lastError = error;
       if (
