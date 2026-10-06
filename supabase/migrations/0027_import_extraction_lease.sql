@@ -65,11 +65,10 @@ begin
     raise exception 'Non authentifié';
   end if;
 
-  select *
-    into v_document
+  select session_id, organization_id
+    into v_document.session_id, v_document.organization_id
     from public.import_documents
-   where id = p_document_id
-   for update;
+   where id = p_document_id;
 
   if not found then
     raise exception 'Document d''import introuvable';
@@ -88,6 +87,18 @@ begin
 
   if not found then
     raise exception 'Session d''import introuvable';
+  end if;
+
+  select *
+    into v_document
+    from public.import_documents
+   where id = p_document_id
+     and session_id = v_session.id
+     and organization_id = v_session.organization_id
+   for update;
+
+  if not found then
+    raise exception 'Document d''import modifié ou introuvable';
   end if;
 
   if v_session.state not in ('processing', 'needs_review') then
@@ -150,11 +161,10 @@ begin
     raise exception 'Non authentifié';
   end if;
 
-  select *
-    into v_document
+  select session_id, organization_id
+    into v_document.session_id, v_document.organization_id
     from public.import_documents
-   where id = p_document_id
-   for update;
+   where id = p_document_id;
 
   if not found then
     raise exception 'Document d''import introuvable';
@@ -173,6 +183,18 @@ begin
 
   if not found then
     raise exception 'Session d''import introuvable';
+  end if;
+
+  select *
+    into v_document
+    from public.import_documents
+   where id = p_document_id
+     and session_id = v_session.id
+     and organization_id = v_session.organization_id
+   for update;
+
+  if not found then
+    raise exception 'Document d''import modifié ou introuvable';
   end if;
 
   if v_document.state <> 'parsed' then
@@ -289,6 +311,12 @@ grant execute on function public.claim_import_extraction_slot(uuid) to authentic
 comment on function public.claim_import_extraction_slot(uuid)
 is 'Réserve atomiquement un slot d''extraction IA par organisation, avec lease serveur fixe de 10 minutes et fencing des leases expirés.';
 
+-- Toutes les opérations de travail suivent le même ordre de verrous :
+-- organisation advisory (si nécessaire), puis session, puis document.
+-- Les lectures initiales de session_id/organization_id ne sont pas verrouillées ;
+-- le verrou effectif commence par la session afin d'éviter les cycles
+-- document→session contre session→document.
+--
 -- ---------------------------------------------------------------------------
 -- 3. Reprise contrôlée d'un document bloqué
 -- ---------------------------------------------------------------------------
@@ -311,11 +339,10 @@ begin
     raise exception 'Non authentifié';
   end if;
 
-  select *
-    into v_document
+  select session_id, organization_id
+    into v_document.session_id, v_document.organization_id
     from public.import_documents
-   where id = p_document_id
-   for update;
+   where id = p_document_id;
 
   if not found then
     raise exception 'Document d''import introuvable';
@@ -334,6 +361,18 @@ begin
 
   if not found then
     raise exception 'Session d''import introuvable';
+  end if;
+
+  select *
+    into v_document
+    from public.import_documents
+   where id = p_document_id
+     and session_id = v_session.id
+     and organization_id = v_session.organization_id
+   for update;
+
+  if not found then
+    raise exception 'Document d''import modifié ou introuvable';
   end if;
 
   if v_session.state <> 'processing' then
