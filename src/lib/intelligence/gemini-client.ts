@@ -54,6 +54,90 @@ export type GeminiInput =
       result: Array<{ type: "text"; text: string }>;
     }>;
 
+const NOVA_E2E_MOCK_ENABLED =
+  process.env.CI === "1" && process.env.NOVA_E2E_MOCK === "1";
+
+function mockGeminiInteraction(input: {
+  input: GeminiInput;
+  previousInteractionId?: string | null;
+}): GeminiInteraction {
+  if (typeof input.input === "string") {
+    if (input.previousInteractionId) {
+      return {
+        id: "e2e-nova-follow-up",
+        steps: [
+          {
+            type: "model_output",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Je garde le contexte de notre échange précédent et je poursuis sur cette base.",
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    return {
+      id: "e2e-nova-tool-call",
+      steps: [
+        {
+          type: "function_call",
+          name: "get_business_snapshot",
+          id: "e2e-nova-call-1",
+          arguments: {},
+        },
+      ],
+    };
+  }
+
+  const resultText = input.input[0]?.result[0]?.text ?? "";
+  let result: {
+    organization?: { currency?: string };
+    counts?: { products?: number; customers?: number; suppliers?: number };
+    current_month?: { revenue?: number };
+  };
+
+  try {
+    result = JSON.parse(resultText) as typeof result;
+  } catch {
+    throw new Error("NOVA_E2E_MOCK_INVALID_TOOL_RESULT");
+  }
+
+  const products = result.counts?.products;
+  const customers = result.counts?.customers;
+  const revenue = result.current_month?.revenue;
+  const currency = result.organization?.currency;
+
+  if (
+    !Number.isFinite(products) ||
+    !Number.isFinite(customers) ||
+    !Number.isFinite(revenue) ||
+    typeof currency !== "string" ||
+    currency.length === 0
+  ) {
+    throw new Error("NOVA_E2E_MOCK_INVALID_TOOL_RESULT");
+  }
+
+  return {
+    id: "e2e-nova-answer-1",
+    steps: [
+      {
+        type: "model_output",
+        content: [
+          {
+            type: "text",
+            text:
+              `J’ai consulté vos données réelles : ${products} produits actifs, ${customers} clients actifs. Chiffre d’affaires du mois : ${revenue} ${currency}.`,
+          },
+        ],
+      },
+    ],
+  };
+}
+
 export class GeminiApiError extends Error {
   readonly status: number;
 
@@ -154,6 +238,10 @@ export async function createGeminiInteraction(input: {
   previousInteractionId?: string | null;
   model?: string | null;
 }): Promise<GeminiInteraction> {
+  if (NOVA_E2E_MOCK_ENABLED) {
+    return mockGeminiInteraction(input);
+  }
+
   return requestGemini({
     model: input.model?.trim() || NOVA_GEMINI_MODEL,
     input: input.input,
