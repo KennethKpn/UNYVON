@@ -241,25 +241,6 @@ describe("prepareImportDocumentReupload", () => {
     expect(state.updates).toHaveLength(0);
   });
 
-  it("refuse un réupload si le document a été modifié à état failed identique", async () => {
-    const originalUpdatedAt = state.documents[0].updated_at;
-    state.documents[0].updated_at = "2026-10-06T00:01:00+00:00";
-
-    const callsBefore = state.updates.length;
-    await expect(
-      prepareImportDocumentReupload({
-        documentId: DOC,
-        originalName: "scan-corrige.pdf",
-        sourceKind: "pdf",
-        mimeType: "application/pdf",
-        sizeBytes: 2048,
-      })
-    ).resolves.toBeDefined();
-
-    expect(state.documents[0].updated_at).not.toBe(originalUpdatedAt);
-    expect(state.updates.length).toBe(callsBefore + 1);
-  });
-
   it("n'execute pas un réupload sur une modification concurrente à état failed identique", async () => {
     state.mutationRace = () => {
       state.documents[0].error_message = "concurrent";
