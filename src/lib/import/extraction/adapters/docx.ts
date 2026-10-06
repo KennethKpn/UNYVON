@@ -183,6 +183,10 @@ function listZipEntries(buf: Buffer): ZipEntryMeta[] {
   return entries;
 }
 
+function documentXmlToText(xml: string): string {
+  return xmlPartToText(xml);
+}
+
 function auxiliaryPartLabel(name: string): string {
   const file = name.slice(name.lastIndexOf("/") + 1);
   const base = file.replace(/\.xml$/i, "");
