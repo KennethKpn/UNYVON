@@ -472,10 +472,14 @@ async function fetchProvider(
         const isTimeout =
           error instanceof DOMException &&
           (error.name === "AbortError" || error.name === "TimeoutError");
-        throw new ProviderTransportError(
+        const transportMessage =
           isTimeout
             ? "Le fournisseur IA n'a pas répondu à temps"
-            : "Impossible de joindre le fournisseur IA",
+            : error instanceof Error
+              ? error.message
+              : "Impossible de joindre le fournisseur IA";
+        throw new ProviderTransportError(
+          transportMessage,
           {
             cause: error,
             details: {
