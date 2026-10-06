@@ -191,6 +191,7 @@ export async function cancelImportSession(
     .update({ state: "cancelled" })
     .eq("id", sessionId)
     .eq("state", session.state)
+    .eq("updated_at", session.updated_at)
     .select()
     .maybeSingle();
   if (error) {
@@ -1387,6 +1388,7 @@ export async function updateImportItemFields(input: {
     .eq("session_id", session.id)
     .eq("organization_id", session.organization_id)
     .eq("status", item.status)
+    .eq("updated_at", item.updated_at)
     .select()
     .maybeSingle();
 
@@ -1443,6 +1445,7 @@ export async function deleteImportItem(itemId: string): Promise<void> {
     .eq("session_id", session.id)
     .eq("organization_id", session.organization_id)
     .eq("status", typedItem.status)
+    .eq("updated_at", typedItem.updated_at)
     .select("id")
     .maybeSingle();
 
