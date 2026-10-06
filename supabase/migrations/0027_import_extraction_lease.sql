@@ -579,14 +579,11 @@ begin
     v_session.id,
     v_document.id,
     v_document.organization_id,
-    (coalesce(candidate->>'entity_type', candidate->>'entityType'))::public.import_entity_type,
+    (candidate->>'entity_type')::public.import_entity_type,
     case
       when candidate ? 'source_page'
        and pg_catalog.jsonb_typeof(candidate->'source_page') <> 'null'
       then (candidate->>'source_page')::integer
-      when candidate ? 'page'
-       and pg_catalog.jsonb_typeof(candidate->'page') <> 'null'
-      then (candidate->>'page')::integer
       else null
     end,
     candidate->'fields',
