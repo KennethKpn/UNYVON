@@ -372,10 +372,12 @@ begin
    where id = v_document.id
      and state = v_document.state;
 
-  return query
-    select *
-      from public.import_documents
-     where id = v_document.id;
+  select *
+    into v_document
+    from public.import_documents
+   where id = v_document.id;
+
+  return v_document;
 end;
 $$;
 
@@ -516,15 +518,11 @@ begin
 
     v_entity := v_candidate->>'entity_type';
 
-    if v_entity is null then
-      v_entity := v_candidate->>'entityType';
-    end if;
-
-    if v_entity not in ('category', 'product', 'customer', 'supplier') then
+          if v_entity not in ('category', 'product', 'customer', 'supplier') then
       raise exception 'Type d''entité de candidat invalide';
     end if;
 
-    v_fields := coalesce(v_candidate->'fields', v_candidate->'fields');
+    v_fields := v_candidate->'fields';
 
     if pg_catalog.jsonb_typeof(v_fields) <> 'object'
        or not (v_fields ? 'name')
@@ -556,7 +554,7 @@ begin
       select key from pg_catalog.jsonb_object_keys(v_fields) as key
     loop
       if (v_entity = 'category' and v_key not in ('name'))
-         or (v_entity = 'product' and v_key not in ('name', 'unit', 'cost_price', 'sale_price', 'min_stock_threshold', 'category', 'stock_quantity'))
+         or (v_entity = 'product' and v_key not in ('name', 'unit', 'cost_price', 'sale_price', 'min_stock_threshold', 'category'))
          or (v_entity = 'customer' and v_key not in ('name', 'phone', 'email', 'address', 'notes'))
          or (v_entity = 'supplier' and v_key not in ('name', 'phone', 'email', 'address', 'notes'))
       then
