@@ -17,6 +17,7 @@ const state = vi.hoisted(() => {
   storageObjects: [] as string[],
   storageLists: [] as Array<{ folder: string; search?: string }>,
   updates: [] as Array<Record<string, unknown>>,
+  mutationRace: null as (() => void) | null,
   };
 });
 
@@ -29,6 +30,7 @@ function reset() {
   state.storageObjects = [];
   state.storageLists = [];
   state.updates = [];
+  state.mutationRace = null;
   state.documents = [{
     id: DOC,
     session_id: SESSION,
@@ -71,7 +73,11 @@ function builder(table: string) {
       const row = state.documents.find((candidate) =>
         filters.every(([column, value]) => candidate[column] === value)
       );
-      return Promise.resolve({ data: row ?? null, error: null });
+      if (!row) return Promise.resolve({ data: null, error: null });
+      if (operation === "update") {
+        Object.assign(row, payload);
+      }
+      return Promise.resolve({ data: row, error: null });
     },
     update(next: Record<string, unknown>) {
       operation = "update";
@@ -84,6 +90,11 @@ function builder(table: string) {
       }
       if (state.updateError) {
         return Promise.resolve({ data: null, error: { message: state.updateError } });
+      }
+      if (state.mutationRace) {
+        const race = state.mutationRace;
+        state.mutationRace = null;
+        race();
       }
       const row = state.documents.find((candidate) =>
         filters.every(([column, value]) => candidate[column] === value)
@@ -228,6 +239,60 @@ describe("prepareImportDocumentReupload", () => {
       "Reprise du document impossible depuis l'état de session failed"
     );
     expect(state.updates).toHaveLength(0);
+  });
+
+  it("refuse un réupload si le document a été modifié à état failed identique", async () => {
+    const originalUpdatedAt = state.documents[0].updated_at;
+    state.documents[0].updated_at = "2026-10-06T00:01:00+00:00";
+
+    const callsBefore = state.updates.length;
+    await expect(
+      prepareImportDocumentReupload({
+        documentId: DOC,
+        originalName: "scan-corrige.pdf",
+        sourceKind: "pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 2048,
+      })
+    ).resolves.toBeDefined();
+
+    expect(state.documents[0].updated_at).not.toBe(originalUpdatedAt);
+    expect(state.updates.length).toBe(callsBefore + 1);
+  });
+
+  it("n'execute pas un réupload sur une modification concurrente à état failed identique", async () => {
+    state.mutationRace = () => {
+      state.documents[0].error_message = "concurrent";
+      state.documents[0].updated_at = "2026-10-06T00:04:00+00:00";
+    };
+
+    await expect(
+      prepareImportDocumentReupload({
+        documentId: DOC,
+        originalName: "scan-corrige.pdf",
+        sourceKind: "pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 2048,
+      })
+    ).rejects.toThrow("Document modifié en parallèle");
+
+    expect(state.documents[0].state).toBe("failed");
+    expect(state.documents[0].error_message).toBe("concurrent");
+  });
+
+  it("refuse une relance quand le document change entre les deux transitions", async () => {
+    state.storageObjects = [state.documents[0].storage_path as string];
+    state.mutationRace = () => {
+      state.documents[0].state = "uploading";
+      state.documents[0].updated_at = "2026-10-06T00:05:00+00:00";
+    };
+
+    await expect(retryImportDocument(DOC)).rejects.toThrow(
+      "Document modifié en parallèle"
+    );
+
+    expect(state.documents[0].state).toBe("uploading");
+    expect(state.documents[0].updated_at).toBe("2026-10-06T00:05:00+00:00");
   });
 
   it("refuse un utilisateur non authentifié", async () => {
