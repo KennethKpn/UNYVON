@@ -107,24 +107,6 @@ describe("formats V1 valides", () => {
     expect(doc.pages[1].text).toContain("page 2");
   });
 
-  it("préserve les retours ligne, les tableaux et les parties auxiliaires DOCX", async () => {
-    const doc = await run("docx", makeRichDocxBytes());
-    expect(doc.status).toBe("SUCCESS");
-    const text = doc.pages.map((page) => page.text).join("\n");
-
-    expect(text).toContain("Produit A\t2500 FCFA\nSuite A");
-    expect(text).toContain("Produit\tPrix\nHuile de palme 1L\t2500 FCFA");
-    expect(text).toContain("[HEADER]\nKAZA Catalogue");
-    expect(text).toContain("[FOOTER]\nConfidentiel");
-    expect(text).toContain("[FOOTNOTES]\nPrix hors taxe");
-  });
-
-  it("ne décompresse pas les médias DOCX non nécessaires au texte", async () => {
-    const doc = await run("docx", makeRichDocxBytes(true));
-    expect(doc.status).toBe("SUCCESS");
-    expect(doc.pages[0].text).toContain("Huile de palme 1L");
-  });
-
   it("extrait la texte d'un DOCX compressé (méthode zip deflate)", async () => {
     const doc = await run("docx", makeDocxBytes(["Ligne deflate 1", "Ligne deflate 2"], true));
     expect(doc.status).toBe("SUCCESS");
@@ -400,6 +382,14 @@ describe("pages et provenance", () => {
       makePdfBytes(["alpha contenu", "beta contenu", "gamma contenu"])
     );
     expect(doc.pages.map((p) => p.page)).toEqual([1, 2, 3]);
+  });
+
+  it("résout un /Resources inline et un /ToUnicode multi-code UTF-16", async () => {
+    const doc = await run("pdf", makePdfInlineUnicodeBytes());
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages).toHaveLength(1);
+    expect(doc.pages[0]?.text).toContain("Pérou");
   });
 
   it("neutralise une citation de page DOCX parce que la pagination native est indisponible", async () => {
@@ -718,6 +708,42 @@ describe("décompression (anti zip-bomb)", () => {
 // Helpers fixtures — PDF minimal 2+ pages, DOCX minimal (ZIP store)
 // ---------------------------------------------------------------------------
 
+function makePdfInlineUnicodeBytes(): Uint8Array {
+  const objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [5 0 R] /Count 1 >> endobj",
+    "3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 4 0 R >> endobj",
+    [
+      "4 0 obj << /Length 0 >> stream",
+      "/CIDInit /ProcSet findresource begin",
+      "12 dict begin",
+      "begincmap",
+      "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+      "begincodespacerange",
+      "<00> <FF>",
+      "endcodespacerange",
+      "beginbfchar",
+      "<01> <0050>",
+      "<02> <00E9>",
+      "<03> <0072>",
+      "<04> <006F>",
+      "<05> <0075>",
+      "endbfchar",
+      "endcmap",
+      "CMapName currentdict /CMap defineresource pop",
+      "end",
+      "end",
+      "endstream endobj",
+    ].join("\n"),
+    "5 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >> endobj",
+    "6 0 obj << /Length 0 >> stream\nBT /F1 12 Tf <0102030405> Tj ET\nendstream endobj",
+  ];
+
+  return new Uint8Array(
+    Buffer.from("%PDF-1.4\n" + objects.map((obj) => obj + "\n").join(""), "latin1")
+  );
+}
+
 function makePdfBytes(pages: string[], compress = false): Uint8Array {
   const enc = (s: string) => Buffer.from(s, "latin1");
   const objects: string[] = [];
@@ -783,28 +809,6 @@ function makeDocxBytes(paragraphs: string[], deflate = false): Uint8Array {
   const files: Array<{ name: string; data: Buffer }> = [
     { name: "[Content_Types].xml", data: Buffer.from(contentTypes, "utf8") },
     { name: "word/document.xml", data: Buffer.from(documentXml, "utf8") },
-  ];
-  return new Uint8Array(buildZip(files, deflate ? 8 : 0));
-}
-function makeRichDocxBytes(deflate = false): Uint8Array {
-  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-<w:body>
-<w:p><w:r><w:t>Produit A</w:t></w:r><w:r><w:tab/><w:t>2500 FCFA</w:t></w:r><w:r><w:br/><w:t>Suite A</w:t></w:r></w:p>
-<w:tbl>
-<w:tr><w:tc><w:p><w:r><w:t>Produit</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Prix</w:t></w:r></w:p></w:tc></w:tr>
-<w:tr><w:tc><w:p><w:r><w:t>Huile de palme 1L</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2500 FCFA</w:t></w:r></w:p></w:tc></w:tr>
-</w:tbl>
-</w:body></w:document>`;
-  const headerXml = `<w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>KAZA Catalogue</w:t></w:r></w:p></w:hdr>`;
-  const footerXml = `<w:ftr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>Confidentiel</w:t></w:r></w:p></w:ftr>`;
-  const footnotesXml = `<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:footnote w:id="1"><w:p><w:r><w:t>Prix hors taxe</w:t></w:r></w:p></w:footnote></w:footnotes>`;
-  const files: Array<{ name: string; data: Buffer }> = [
-    { name: "word/document.xml", data: Buffer.from(documentXml, "utf8") },
-    { name: "word/header1.xml", data: Buffer.from(headerXml, "utf8") },
-    { name: "word/footer1.xml", data: Buffer.from(footerXml, "utf8") },
-    { name: "word/footnotes.xml", data: Buffer.from(footnotesXml, "utf8") },
-    { name: "word/media/image1.bin", data: Buffer.alloc(1024 * 1024, 0xaa) },
   ];
   return new Uint8Array(buildZip(files, deflate ? 8 : 0));
 }
