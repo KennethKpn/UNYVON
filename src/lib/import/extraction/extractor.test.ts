@@ -640,6 +640,36 @@ describe("robustesse fournisseur", () => {
   });
 });
 
+describe("fidélité DOCX", () => {
+  it("préserve les tableaux comme lignes tabulées sans perdre l'ordre du document", async () => {
+    const xml = '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+      '<w:p><w:r><w:t>Introduction</w:t></w:r></w:p>' +
+      '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Produit</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Prix</w:t></w:r></w:p></w:tc></w:tr>' +
+      '<w:tr><w:tc><w:p><w:r><w:t>Huile</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>2500</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' +
+      '<w:p><w:r><w:t>Conclusion</w:t></w:r></w:p></w:body></w:document>';
+    const doc = await run("docx", makeDocxXmlBytes(xml), fakeProvider(VALID_OUTPUT));
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages[0].text).toContain("Introduction");
+    expect(doc.pages[0].text).toContain("Produit\tPrix");
+    expect(doc.pages[0].text).toContain("Huile\t2500");
+    expect(doc.pages[0].text).toContain("Conclusion");
+    expect(doc.pages[0].text.indexOf("Introduction")).toBeLessThan(doc.pages[0].text.indexOf("Produit\tPrix"));
+    expect(doc.pages[0].text.indexOf("Huile\t2500")).toBeLessThan(doc.pages[0].text.indexOf("Conclusion"));
+  });
+
+  it("préserve tabulations, retours forcés et entités XML numériques", async () => {
+    const xml = '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+      '<w:p><w:r><w:t>Nom</w:t><w:tab/><w:t>Valeur</w:t><w:br/><w:t>é — &#x1F4E6;</w:t></w:r></w:p>' +
+      '</w:body></w:document>';
+    const doc = await run("docx", makeDocxXmlBytes(xml), fakeProvider(VALID_OUTPUT));
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages[0].text).toContain("Nom\tValeur");
+    expect(doc.pages[0].text).toContain("é — 📦");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Statuts SUCCESS / PARTIAL / FAILED
 // ---------------------------------------------------------------------------
@@ -752,6 +782,18 @@ function makePdfBytes(pages: string[], compress = false): Uint8Array {
   xref += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
   parts.push(encoder(xref));
   return new Uint8Array(Buffer.concat(parts));
+}
+
+function makeDocxXmlBytes(xml: string, deflate = false): Uint8Array {
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`;
+
+  const files: Array<{ name: string; data: Buffer }> = [
+    { name: "[Content_Types].xml", data: Buffer.from(contentTypes, "utf8") },
+    { name: "word/document.xml", data: Buffer.from(xml, "utf8") },
+  ];
+
+  return new Uint8Array(buildZip(files, deflate ? 8 : 0));
 }
 
 function makeDocxBytes(paragraphs: string[], deflate = false): Uint8Array {
