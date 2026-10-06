@@ -58,22 +58,21 @@ jobs:
         run: |
           set -euo pipefail
           for column in parsed_artifact parsed_at; do
-            status="$(curl -sS -o /tmp/schema-check.json -w "%{http_code}" \\
-              -H "apikey: \${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \\
-              -H "Authorization: Bearer \${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \\
-              --get \\
-              --data-urlencode "select=\${column}" \\
-              --data-urlencode "limit=0" \\
-              "\${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/import_documents")"
+            status="$(curl -sS -o /tmp/schema-check.json -w "%{http_code}" \
+              -H "apikey: ${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \
+              -H "Authorization: Bearer ${NEXT_PUBLIC_SUPABASE_ANON_KEY}" \
+              --get \
+              --data-urlencode "select=${column}" \
+              --data-urlencode "limit=0" \
+              "${NEXT_PUBLIC_SUPABASE_URL}/rest/v1/import_documents")"
             if [ "$status" != "200" ]; then
-              echo "Required Supabase schema column import_documents.\${column} is missing or inaccessible (HTTP $status)."
+              echo "Required Supabase schema column import_documents.${column} is missing or inaccessible (HTTP $status)."
               cat /tmp/schema-check.json
               echo "Apply supabase/migrations/0023_import_parsed_artifact.sql to UNYVON-E2E, then rerun this workflow."
               exit 1
             fi
           done
           echo "Required Smart Import parsed-artifact schema is present."
-
       - name: Install dependencies
         run: npm ci
 
