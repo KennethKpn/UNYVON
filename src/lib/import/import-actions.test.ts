@@ -1233,7 +1233,8 @@ describe("review item edit/delete", () => {
     ).rejects.toThrow();
 
     expect(h.db.items[0].status).toBe("ignored");
-    expect(h.db.items[0].fields.name.raw).toBe("Huile");
+    const fields = h.db.items[0].fields as { name: { raw: string } };
+    expect(fields.name.raw).toBe("Huile");
   });
 
   it("n'efface pas un item modifié concurrentement pendant la suppression", async () => {
