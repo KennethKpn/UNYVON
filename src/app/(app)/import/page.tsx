@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { useOrg } from "@/lib/context/org-context";
 import {
-  addImportDocument, cancelImportSession, commitImportSession, createImportSession,
+  addImportDocument, cancelImportSession, commitImportSession, createImportSession, reopenFailedImportSession,
   decideImportItem, deleteImportDocument, deleteImportItem, finalizeImportReview, markImportDocumentUploaded, markImportDocumentUploadFailed,
   updateImportItemFields,
   materializeImportDocument, matchImportSession, startImportProcessing, getImportSessions,
@@ -227,6 +227,15 @@ export default function ImportPage(){
       setNotice("Import terminé.");
     }catch(e){setError(e instanceof Error?e.message:"Commit impossible");await refresh();}finally{setBusy("")}
   }
+  async function reopenSession(){if(!data)return;setBusy("reopen");setError("");setNotice("");
+    try{
+      const s=await reopenFailedImportSession(data.session.id);
+      setData(x=>x?{...x,session:s}:x);
+      setSessions(x=>x.map(item=>item.id===s.id?s:item));
+      setNotice("Session réouverte. Vous pouvez ajouter un nouveau document.");
+    }catch(e){setError(e instanceof Error?e.message:"Réouverture impossible");}
+    finally{setBusy("")}
+  }
   async function cancel(){if(!data)return;setBusy("cancel");setError("");
     try{const s=await cancelImportSession(data.session.id);setData(x=>x?{...x,session:s}:x);setNotice("Import annulé.");}
     catch(e){setError(e instanceof Error?e.message:"Annulation impossible");}finally{setBusy("")}
@@ -326,7 +335,7 @@ export default function ImportPage(){
             ← Retour à l&apos;onboarding
           </Button>
         )}
-        {!data?<Button onClick={()=>void newSession()} disabled={!!busy}><FileUp className="w-4 h-4"/>{busy==="new"?"Création…":"Nouvel import"}</Button>:<Button variant="outline" size="sm" onClick={()=>{setData(null);setLoading(false);router.replace("/import")}} disabled={!!busy}>← Imports</Button>}
+        {!data?<Button onClick={()=>void newSession()} disabled={!!busy}><FileUp className="w-4 h-4"/>{busy==="new"?"Création…":"Nouvel import"}</Button>:<>{data.session.state==="failed"&&data.documents.length===0&&<Button variant="outline" size="sm" onClick={()=>void reopenSession()} disabled={!!busy}><RefreshCw className="w-4 h-4"/>{busy==="reopen"?"Réouverture…":"Recommencer"}</Button>}<Button variant="outline" size="sm" onClick={()=>{setData(null);setLoading(false);router.replace("/import")}} disabled={!!busy}>← Imports</Button></>}
       </div>
     </div>
     {(error||notice)&&<div data-testid={error?"import-upload-error":undefined} role={error?"alert":"status"} className={error?"p-3 rounded-[10px] bg-error/10 text-error text-sm":"p-3 rounded-[10px] bg-success/10 text-success text-sm"}><span className="flex items-center gap-2"><AlertCircle className="w-4 h-4"/>{error||notice}</span></div>}
