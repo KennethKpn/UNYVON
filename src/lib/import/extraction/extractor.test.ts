@@ -402,6 +402,14 @@ describe("pages et provenance", () => {
     expect(doc.pages.map((p) => p.page)).toEqual([1, 2, 3]);
   });
 
+  it("résout un /Resources inline et un /ToUnicode multi-code UTF-16", async () => {
+    const doc = await run("pdf", makePdfInlineUnicodeBytes());
+
+    expect(doc.status).toBe("SUCCESS");
+    expect(doc.pages).toHaveLength(1);
+    expect(doc.pages[0]?.text).toContain("Pérou");
+  });
+
   it("neutralise une citation de page DOCX parce que la pagination native est indisponible", async () => {
     const output = {
       candidates: [
@@ -717,6 +725,39 @@ describe("décompression (anti zip-bomb)", () => {
 // ---------------------------------------------------------------------------
 // Helpers fixtures — PDF minimal 2+ pages, DOCX minimal (ZIP store)
 // ---------------------------------------------------------------------------
+
+function makePdfInlineUnicodeBytes(): Uint8Array {
+  const objects = [
+    "1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+    "2 0 obj << /Type /Pages /Kids [5 0 R] /Count 1 >> endobj",
+    "3 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /ToUnicode 4 0 R >> endobj",
+    [
+      "4 0 obj << /Length 0 >> stream",
+      "/CIDInit /ProcSet findresource begin",
+      "12 dict begin",
+      "begincmap",
+      "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
+      "begincodespacerange",
+      "<00> <FF>",
+      "endcodespacerange",
+      "beginbfchar",
+      "<01> <0050>",
+      "<02> <00E9>",
+      "<03> <0072>",
+      "<04> <006F>",
+      "endbfchar",
+      "endcmap",
+      "CMapName currentdict /CMap defineresource pop",
+      "end",
+      "end",
+      "endstream endobj",
+    ].join("\n"),
+    "5 0 obj << /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R >> >> /Contents 6 0 R >> endobj",
+    "6 0 obj << /Length 0 >> stream\nBT /F1 12 Tf <01020304> Tj ET\nendstream endobj",
+  ];
+
+  return new Uint8Array(Buffer.from("%PDF-1.4\n" + objects.map((obj) => obj + "\n").join(""), "latin1"));
+}
 
 function makePdfBytes(pages: string[], compress = false): Uint8Array {
   const enc = (s: string) => Buffer.from(s, "latin1");
