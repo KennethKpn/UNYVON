@@ -557,10 +557,10 @@ describe("erreurs fournisseur structurées", () => {
     await vi.runAllTimersAsync();
 
     await expect(promise).rejects.toBeInstanceOf(ProviderHttpError);
-    await expect(
-      provider!.parse({ kind: "text", text: "x" })
-    ).rejects.toMatchObject({
-      details: {
+    try {
+      await promise;
+    } catch (error) {
+      expect(getProviderErrorDetails(error)).toEqual({
         provider: "openai",
         model: "gpt-4o-mini",
         category: "rate_limit",
@@ -568,9 +568,10 @@ describe("erreurs fournisseur structurées", () => {
         status: 429,
         providerCode: "RESOURCE_EXHAUSTED",
         retryAfterMs: 1000,
-      },
-    });
-    expect(calls).toBe(4);
+        requestId: undefined,
+      });
+    }
+    expect(calls).toBe(2);
     vi.useRealTimers();
   });
 
@@ -630,26 +631,6 @@ describe("erreurs fournisseur structurées", () => {
     });
   });
 
-  it("porte les détails provider jusque dans l'erreur d'extraction", async () => {
-    const provider: Provider = {
-      name: "gemini",
-      async parse() {
-        throw new ProviderHttpError("raw provider message", 503, {
-          details: {
-            provider: "gemini",
-            model: "gemini-3.6-flash",
-            category: "unavailable",
-            retryable: true,
-            providerCode: "UNAVAILABLE",
-            retryAfterMs: 1200,
-            requestId: "req-503",
-          },
-        });
-      },
-    };
-
-    expect(provider).toBeDefined();
-  });
 });
 
 describe("createProviderFromConfig", () => {
