@@ -1237,9 +1237,28 @@ describe("review item edit/delete", () => {
     expect(fields.name.raw).toBe("Huile");
   });
 
-  it("n'efface pas un item modifié concurrentement pendant la suppression", async () => {
+  it("n'ecrase pas un item modifié concurrentement à statut identique", async () => {
     h.db.mutationRace = () => {
-      h.db.items[0].status = "imported";
+      const fields = h.db.items[0].fields as { name: { raw: string } };
+      fields.name.raw = "Nom concurrent";
+      h.db.items[0].updated_at = "2026-10-06T00:01:00+00:00";
+    };
+
+    await expect(
+      updateImportItemFields({
+        id: ITEM,
+        values: { name: "Nom serveur" },
+      })
+    ).rejects.toThrow("Item modifié en parallèle");
+
+    const fields = h.db.items[0].fields as { name: { raw: string } };
+    expect(fields.name.raw).toBe("Nom concurrent");
+    expect(h.db.items[0].updated_at).toBe("2026-10-06T00:01:00+00:00");
+  });
+
+  it("n'efface pas un item modifié concurrentement à statut identique", async () => {
+    h.db.mutationRace = () => {
+      h.db.items[0].updated_at = "2026-10-06T00:02:00+00:00";
     };
 
     await expect(deleteImportItem(ITEM)).rejects.toThrow(
@@ -1247,7 +1266,8 @@ describe("review item edit/delete", () => {
     );
 
     expect(h.db.items).toHaveLength(1);
-    expect(h.db.items[0].status).toBe("imported");
+    expect(h.db.items[0].status).toBe("pending");
+    expect(h.db.items[0].updated_at).toBe("2026-10-06T00:02:00+00:00");
   });
 });
 
@@ -1303,6 +1323,19 @@ describe("cancelImportSession", () => {
     await expect(cancelImportSession(h.SESSION)).rejects.toThrow();
 
     expect(h.db.sessions[0].state).toBe("processing");
+  });
+
+  it("n'annule pas une session modifiée concurrentement à état identique", async () => {
+    h.db.mutationRace = () => {
+      h.db.sessions[0].updated_at = "2026-10-06T00:03:00+00:00";
+    };
+
+    await expect(cancelImportSession(h.SESSION)).rejects.toThrow(
+      "Session modifiée en parallèle"
+    );
+
+    expect(h.db.sessions[0].state).toBe("collecting");
+    expect(h.db.sessions[0].updated_at).toBe("2026-10-06T00:03:00+00:00");
   });
 
   it("rejette un rôle hors owner/manager", async () => {
