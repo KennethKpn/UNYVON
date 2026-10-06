@@ -190,6 +190,7 @@ export async function cancelImportSession(
     .from("import_sessions")
     .update({ state: "cancelled" })
     .eq("id", sessionId)
+    .eq("state", session.state)
     .select()
     .single();
   if (error) {
@@ -1380,6 +1381,7 @@ export async function updateImportItemFields(input: {
     .eq("id", item.id)
     .eq("session_id", session.id)
     .eq("organization_id", session.organization_id)
+    .eq("status", item.status)
     .select()
     .single();
 
@@ -1424,15 +1426,24 @@ export async function deleteImportItem(itemId: string): Promise<void> {
     throw new Error("Un item déjà importé ne peut plus être supprimé");
   }
 
-  const { error } = await supabase
+  const { data: deleted, error } = await supabase
     .from("import_items")
     .delete()
     .eq("id", typedItem.id)
     .eq("session_id", session.id)
-    .eq("organization_id", session.organization_id);
+    .eq("organization_id", session.organization_id)
+    .eq("status", typedItem.status)
+    .select("id")
+    .maybeSingle();
 
   if (error) {
     throw new Error(`Erreur suppression item d'import: ${error.message}`);
+  }
+
+  if (!deleted) {
+    throw new Error(
+      "Item modifié en parallèle : suppression annulée pour protéger la revue"
+    );
   }
 }
 
