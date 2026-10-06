@@ -511,6 +511,83 @@ describe("raw / confiance / absences", () => {
 // 18-19. Timeout / erreur fournisseur
 // ---------------------------------------------------------------------------
 
+describe("erreurs fournisseur structurées", () => {
+  it("convertit un 429 provider en erreur d'extraction structurée sans exposer le message brut", async () => {
+    const provider: Provider = {
+      name: "gemini",
+      async parse() {
+        throw new ProviderHttpError("quota interne: secret", 429, {
+          details: {
+            provider: "gemini",
+            model: "gemini-3.6-flash",
+            category: "rate_limit",
+            retryable: true,
+            providerCode: "RESOURCE_EXHAUSTED",
+            retryAfterMs: 1500,
+            requestId: "req-429",
+          },
+        });
+      },
+    };
+
+    const doc = await run("md", enc("Produit A"), provider);
+
+    expect(doc.status).toBe("PARTIAL");
+    expect(doc.candidates).toHaveLength(0);
+    expect(doc.errors[0]).toMatchObject({
+      code: "PROVIDER_RATE_LIMIT",
+      message: "Le fournisseur IA est temporairement saturé ; une nouvelle tentative est possible.",
+      provider: {
+        provider: "gemini",
+        model: "gemini-3.6-flash",
+        category: "rate_limit",
+        retryable: true,
+        status: 429,
+        providerCode: "RESOURCE_EXHAUSTED",
+        retryAfterMs: 1500,
+        requestId: "req-429",
+      },
+    });
+    expect(doc.errors[0]?.message).not.toContain("quota interne");
+  });
+
+  it("convertit un timeout multimodal en PROVIDER_TIMEOUT sans perdre la confidentialité", async () => {
+    const provider: Provider = {
+      name: "gemini",
+      async parse() {
+        throw new (await import("./provider")).ProviderTransportError(
+          "timeout interne",
+          {
+            details: {
+              provider: "gemini",
+              model: "gemini-3.6-flash",
+              category: "timeout",
+              retryable: true,
+            },
+          }
+        );
+      },
+    };
+
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]);
+    const doc = await createDocumentExtractor({ provider }).extract({
+      documentId: DOC_ID,
+      sourceKind: "image",
+      filename: "photo.png",
+      bytes: png,
+    });
+
+    expect(doc.status).toBe("FAILED");
+    expect(doc.errors[0]).toMatchObject({
+      code: "PROVIDER_TIMEOUT",
+      provider: {
+        category: "timeout",
+        retryable: true,
+      },
+    });
+  });
+});
+
 describe("robustesse fournisseur", () => {
   it("timeout du fournisseur : échec propre, texte conservé en PARTIAL", async () => {
     const timeoutProvider: Provider = {
