@@ -75,7 +75,18 @@ function builder(table: string) {
       );
       if (!row) return Promise.resolve({ data: null, error: null });
       if (operation === "update") {
+        if (state.mutationRace) {
+          const race = state.mutationRace;
+          state.mutationRace = null;
+          race();
+          const racedRow = state.documents.find((candidate) =>
+            filters.every(([column, value]) => candidate[column] === value)
+          );
+          if (!racedRow) return Promise.resolve({ data: null, error: null });
+          return Promise.resolve({ data: null, error: null });
+        }
         Object.assign(row, payload);
+        state.updates.push({ ...(payload ?? {}) });
       }
       return Promise.resolve({ data: row, error: null });
     },
@@ -91,11 +102,7 @@ function builder(table: string) {
       if (state.updateError) {
         return Promise.resolve({ data: null, error: { message: state.updateError } });
       }
-      if (state.mutationRace) {
-        const race = state.mutationRace;
-        state.mutationRace = null;
-        race();
-      }
+
       const row = state.documents.find((candidate) =>
         filters.every(([column, value]) => candidate[column] === value)
       );
