@@ -1,0 +1,85 @@
+name: Supabase — migration replay
+
+on:
+  pull_request:
+    paths:
+      - "supabase/migrations/**"
+      - ".github/workflows/supabase-migration-replay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-migration-replay
+  cancel-in-progress: true
+
+jobs:
+  migration-replay:
+    name: Fresh local migration replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v3
+        with:
+          version: 2.119.0
+
+      - name: Initialize local Supabase configuration
+        run: supabase init
+
+      - name: Start fresh local Supabase stack
+        run: supabase db start
+
+      - name: Replay all migrations from scratch
+        run: supabase db reset --local --no-seed
+
+      - name: Verify migration state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "=== Migration versions ==="
+          supabase migration list --local
+
+          echo "=== Critical Smart Import / NOVA schema ==="
+          supabase db query --local "\
+            select table_name, column_name
+            from information_schema.columns
+            where table_schema = 'public'
+              and (
+                (table_name = 'import_documents'
+                 and column_name in ('parsed_artifact', 'parsed_at',
+                                     'processing_lease_id',
+                                     'processing_lease_expires_at'))
+                or
+                (table_name = 'nova_conversations'
+                 and column_name in ('gemini_interaction_id'))
+              )
+            order by table_name, ordinal_position;
+          "
+
+          echo "=== Critical RPC overloads ==="
+          supabase db query --local "\
+            select
+              p.oid::regprocedure as routine,
+              pg_catalog.position('stock_quantity' in pg_catalog.pg_get_functiondef(p.oid)) as stock_quantity_position
+            from pg_catalog.pg_proc p
+            join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+            where n.nspname = 'public'
+              and p.proname in ('materialize_import_document', 'import_commit')
+            order by routine;
+          "
+
+      - name: Stop local Supabase stack
+        if: always()
+        run: supabase stop
