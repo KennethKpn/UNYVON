@@ -618,6 +618,37 @@ async function callProvider(
     : new Error("Fournisseur IA indisponible");
 }
 
+function createE2EImportProvider(): Provider {
+  return {
+    name: "e2e-import-mock",
+    async parse(request) {
+      if (request.kind !== "text") {
+        throw new Error("IMPORT_E2E_MOCK_TEXT_ONLY");
+      }
+
+      const source = request.text.normalize("NFC");
+      const required = ["Huile E2E", "2500 FCFA", "7"];
+      if (!required.every((value) => source.includes(value))) {
+        throw new Error("IMPORT_E2E_MOCK_DOCUMENT_CONTENT_MISMATCH");
+      }
+
+      return {
+        candidates: [
+          {
+            entityType: "product",
+            fields: {
+              name: { raw: "Huile E2E", confidence: "high", page: 1 },
+              unit: { raw: "L", confidence: "high", page: 1 },
+              sale_price: { raw: "2500", confidence: "high", page: 1 },
+              stock_quantity: { raw: "7", confidence: "high", page: 1 },
+            },
+          },
+        ],
+      };
+    },
+  };
+}
+
 export function createProviderFromConfig(
   config: ProviderConfig | null
 ): Provider | null {
@@ -629,5 +660,9 @@ export function createProviderFromConfig(
 }
 
 export function createDefaultProvider(): Provider | null {
+  if (process.env.CI === "1" && process.env.IMPORT_E2E_MOCK === "1") {
+    return createE2EImportProvider();
+  }
+
   return createProviderFromConfig(resolveProviderConfig());
 }
