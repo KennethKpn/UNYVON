@@ -46,6 +46,7 @@ const h = vi.hoisted(() => {
       structured?: unknown;
     }>,
     rpcMaterializeError: null as string | null,
+    rpcExtractionCapacityError: null as string | null,
     mutationRace: null as (() => void) | null,
   };
 
@@ -86,6 +87,7 @@ const h = vi.hoisted(() => {
     db.downloadBytes = new Uint8Array([37, 80, 68, 70, 45, 49, 46, 55]);
     db.extractionQueue = [];
     db.rpcMaterializeError = null;
+    db.rpcExtractionCapacityError = null;
     db.mutationRace = null;
     rpcCalls.length = 0;
     storageCalls.length = 0;
@@ -257,6 +259,32 @@ const h = vi.hoisted(() => {
       const orgId = (args as { org_id?: string } | undefined)?.org_id;
       if (fn === "current_org_role") {
         return { data: orgId ? (db.roles[orgId] ?? null) : null, error: null };
+      }
+      if (fn === "claim_import_extraction_slot") {
+        if (db.rpcExtractionCapacityError) {
+          return { data: null, error: { message: db.rpcExtractionCapacityError } };
+        }
+        const documentId = (args as { p_document_id: string }).p_document_id;
+        const document = db.documents.find((row) => row.id === documentId);
+        if (!document) return { data: null, error: { message: "document absent" } };
+        if (document.state !== "parsed") {
+          return { data: null, error: { message: `état actuel: ${document.state}` } };
+        }
+        const active = db.documents.filter(
+          (row) => row.organization_id === document.organization_id && row.state === "extracting"
+        ).length;
+        if (active >= 2) {
+          return {
+            data: null,
+            error: {
+              message: "CAPACITE_EXTRACTION_ATTEINTE: limite de 2 extractions IA simultanées pour cette organisation",
+            },
+          };
+        }
+        document.state = "extracting";
+        document.error_message = null;
+        document.updated_at = "2026-10-06T00:00:01+00:00";
+        return { data: document, error: null };
       }
       if (fn === "materialize_import_document") {
         if (db.rpcMaterializeError) {
@@ -948,6 +976,73 @@ describe("startImportProcessing — lots partiellement en échec", () => {
       "Aucun document prêt à traiter"
     );
     expect(h.db.sessions[0].state).toBe("collecting");
+  });
+});
+
+describe("materializeImportDocument — capacité IA par organisation", () => {
+  beforeEach(() => {
+    h.db.sessions = [h.sessionRow({ state: "processing" })];
+    h.db.documents = [
+      h.documentRow({
+        state: "parsed",
+        parsed_artifact: {
+          version: 1,
+          source: "pdf-local",
+          pages: [{ page: 1, text: "Produit A" }],
+          warnings: [],
+        },
+      }),
+    ];
+    h.db.extractionQueue = [{
+      structured: {
+        status: "SUCCESS",
+        documentId: h.DOC,
+        sourceKind: "pdf",
+        source: "pdf-local",
+        pages: [{ page: 1, text: "Produit A" }],
+        candidates: [],
+        warnings: [],
+        errors: [],
+      },
+    }];
+  });
+
+  it("réserve le slot IA atomiquement avant la structuration d'un document parsed", async () => {
+    await materializeImportDocument(h.DOC);
+
+    expect(h.db.documents[0].state).toBe("extracted");
+    expect(h.rpcCalls.some((call) => call.fn === "claim_import_extraction_slot")).toBe(true);
+  });
+
+  it("ne lance aucune structuration IA quand la capacité de l'organisation est saturée", async () => {
+    h.db.documents.push(
+      h.documentRow({
+        id: "77777777-7777-4777-8777-777777777777",
+        state: "extracting",
+      }),
+      h.documentRow({
+        id: "88888888-8888-4888-8888-888888888888",
+        state: "extracting",
+      })
+    );
+
+    h.db.rpcExtractionCapacityError =
+      "CAPACITE_EXTRACTION_ATTEINTE: limite de 2 extractions IA simultanées pour cette organisation";
+
+    await expect(materializeImportDocument(h.DOC)).rejects.toThrow(
+      "CAPACITE_EXTRACTION_ATTEINTE"
+    );
+
+    expect(h.db.documents[0].state).toBe("parsed");
+    expect(h.db.extractionQueue).toHaveLength(1);
+  });
+
+  it("libère réellement la capacité lorsque le document quitte extracting", async () => {
+    await materializeImportDocument(h.DOC);
+
+    expect(
+      h.db.documents.filter((document) => document.state === "extracting")
+    ).toHaveLength(0);
   });
 });
 
