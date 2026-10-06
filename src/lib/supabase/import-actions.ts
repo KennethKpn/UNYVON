@@ -337,6 +337,7 @@ export async function markImportDocumentUploaded(
     .from("import_documents")
     .update({ state: "uploaded" })
     .eq("id", documentId)
+    .eq("state", document.state)
     .select()
     .single();
   if (error) {
@@ -399,6 +400,7 @@ export async function markImportDocumentUploadFailed(
     .from("import_documents")
     .update({ state: "failed", error_message: errorMessage })
     .eq("id", documentId)
+    .eq("state", document.state)
     .select()
     .single();
   if (error) {
@@ -431,13 +433,23 @@ export async function deleteImportDocument(documentId: string): Promise<void> {
   }
   assertOwnedStoragePath(document);
 
-  const { error } = await supabase
+  const { data: deleted, error } = await supabase
     .from("import_documents")
     .delete()
-    .eq("id", documentId);
+    .eq("id", documentId)
+    .eq("state", document.state)
+    .select("id")
+    .maybeSingle();
+
   if (error) {
     // Échec avant toute mutation : l'objet Storage est intact.
     throw new Error(`Erreur suppression document: ${error.message}`);
+  }
+
+  if (!deleted) {
+    throw new Error(
+      "Document modifié en parallèle : suppression annulée pour protéger le nouveau contenu"
+    );
   }
 
   const { error: storageError } = await supabase.storage
