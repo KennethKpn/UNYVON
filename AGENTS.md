@@ -1,7 +1,7 @@
 <!-- PROJECT LOCK — UNYVON -->
 PROJECT: UNYVON
-CANONICAL REPOSITORY: KennethSalomon/UNYVON.git
-CANONICAL WORKING DIRECTORY: C:\Users\hp\Desktop\UNIVON\unyvon
+CANONICAL REPOSITORY: KennethKpn/UNYVON.git
+CANONICAL WORKING DIRECTORY: C:\\Users\\hp\\Desktop\\UNIVON\\unyvon
 
 Toute tâche concernant UNYVON doit être exécutée dans ce dossier et sur ce remote.
 Toute divergence doit provoquer un arrêt avant modification.
