@@ -348,7 +348,7 @@ export default function LandingPage() {
           />
           <CrowdCanvas className="absolute inset-x-0 top-0 h-[calc(100%_-_18px)] w-full" />
           <span className="pointer-events-none absolute bottom-0 right-6 text-[9px] leading-[12px] text-muted/45">
-            Illustrations Open Peeps · Motion adapté de Skiper UI
+            Open Peeps · Skiper UI
           </span>
         </div>
       </section>
