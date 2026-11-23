@@ -12,6 +12,7 @@ import {
   TrendingUp,
   Package,
   Users,
+  UserRound,
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
@@ -423,6 +424,11 @@ export default function LandingPage() {
                     sizes="150px"
                     className="object-cover object-top"
                   />
+                  <div aria-hidden="true" className="absolute right-[3.5%] top-[1.2%] z-10 flex h-[5.5%] w-[19.5%] items-center justify-center rounded-full bg-white">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-lavender-soft text-primary">
+                      <UserRound className="h-4 w-4" />
+                    </span>
+                  </div>
                 </div>
                 <div aria-hidden="true" className="absolute left-[45.6%] top-[13.1%] z-10 h-[3.2%] w-[7.8%] rounded-full bg-black" />
               </div>
