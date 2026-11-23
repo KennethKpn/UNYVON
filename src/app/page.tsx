@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 import {
   ArrowRight,
@@ -252,74 +253,40 @@ export default function LandingPage() {
             </p>
           </div>
 
-          {/* Dashboard Preview */}
-          <div className="mt-16 md:mt-24 max-w-5xl mx-auto">
-            <div className="rounded-card border border-border bg-surface shadow-lg overflow-hidden">
-              <div className="h-10 border-b border-border flex items-center px-4 gap-2">
-                <div className="w-3 h-3 rounded-full bg-error/60" />
-                <div className="w-3 h-3 rounded-full bg-warning/60" />
-                <div className="w-3 h-3 rounded-full bg-success/60" />
-                <div className="ml-4 text-xs text-muted font-mono">unyvon.app/dashboard</div>
+          {/* Product preview — capture réelle du dashboard */}
+          <div className="relative mx-auto mt-16 w-full max-w-6xl md:mt-24">
+            <div aria-hidden="true" className="absolute -inset-8 rounded-[40px] bg-primary/10 blur-3xl" />
+            <div className="relative overflow-hidden rounded-[22px] border border-white/80 bg-white p-2 shadow-[0_32px_90px_-32px_rgba(49,38,125,0.34)] ring-1 ring-black/[0.04] sm:rounded-[26px] sm:p-3">
+              <div className="flex h-10 items-center gap-2 border-b border-border px-2 sm:h-12 sm:px-3">
+                <div className="flex items-center gap-1.5" aria-hidden="true">
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#F28B82]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#F5C36A]" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-[#72C39B]" />
+                </div>
+                <div className="ml-2 flex h-7 min-w-0 flex-1 items-center rounded-md bg-background px-3 text-left text-[10px] text-muted sm:ml-4 sm:text-xs">
+                  <span className="truncate">unyvon.app/dashboard</span>
+                </div>
+                <span className="hidden shrink-0 text-[10px] font-medium text-muted sm:block">Aperçu du produit</span>
               </div>
-              <div className="p-6 md:p-8">
-                <div className="mb-6">
-                  <p className="text-sm text-muted">Bonjour Patrick 👋</p>
-                  <p className="text-xs text-muted mt-1">Voici ce qui mérite votre attention.</p>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  {[
-                    { label: "CA ce mois", value: "4,28 M", color: "text-ink" },
-                    { label: "Marge", value: "31,8 %", color: "text-success" },
-                    { label: "Encaissements", value: "2,10 M", color: "text-info" },
-                    { label: "Créances", value: "1,42 M", color: "text-warning" },
-                  ].map((kpi) => (
-                    <div key={kpi.label} className="rounded-[12px] bg-background p-4">
-                      <p className="text-xs text-muted">{kpi.label}</p>
-                      <p className={`text-xl md:text-2xl font-display font-bold mt-1 ${kpi.color}`}>
-                        {kpi.value}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-                <div className="grid md:grid-cols-3 gap-4">
-                  <div className="md:col-span-2 rounded-[12px] bg-background p-4">
-                    <p className="text-xs text-muted mb-3">Performance</p>
-                    <div className="flex items-end gap-1 h-24">
-                      {[40, 55, 45, 65, 50, 70, 60, 75, 80, 65, 85, 90].map((h, i) => (
-                        <div
-                          key={i}
-                          className="flex-1 bg-primary/20 rounded-t-sm"
-                          style={{ height: `${h}%` }}
-                        >
-                          <div
-                            className="w-full bg-primary rounded-t-sm"
-                            style={{ height: "60%" }}
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="rounded-[12px] bg-background p-4">
-                    <p className="text-xs text-muted mb-3 flex items-center gap-1.5">
-                      <span className="text-primary">✦</span> NOVA
-                    </p>
-                    <div className="space-y-2">
-                      <div className="flex items-start gap-2 text-xs">
-                        <AlertTriangle className="w-3.5 h-3.5 text-warning mt-0.5 shrink-0" />
-                        <span className="text-text">Stock riz risque de rupture</span>
-                      </div>
-                      <div className="flex items-start gap-2 text-xs">
-                        <TrendingUp className="w-3.5 h-3.5 text-error mt-0.5 shrink-0" />
-                        <span className="text-text">Marge huile en baisse</span>
-                      </div>
-                      <div className="flex items-start gap-2 text-xs">
-                        <Users className="w-3.5 h-3.5 text-info mt-0.5 shrink-0" />
-                        <span className="text-text">2 clients = 63 % créances</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div className="overflow-hidden rounded-b-[16px] bg-[#F8F9FC] sm:rounded-b-[18px]">
+                <Image
+                  src="/images/landing/unyvon-dashboard-desktop.png"
+                  alt="Capture du véritable tableau de bord UNYVON avec ses six indicateurs, le graphique de performance et les alertes NOVA"
+                  width={1920}
+                  height={1080}
+                  priority
+                  sizes="(max-width: 1280px) 100vw, 1152px"
+                  className="block h-auto w-full"
+                />
               </div>
+            </div>
+            <div className="pointer-events-none absolute -bottom-5 left-5 hidden items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-medium text-text shadow-lg backdrop-blur sm:flex">
+              <span className="h-2 w-2 rounded-full bg-success" />
+              Les indicateurs essentiels réunis
+            </div>
+            <div className="pointer-events-none absolute -right-3 top-[23%] hidden rounded-2xl border border-white/80 bg-white/95 px-4 py-3 shadow-xl backdrop-blur lg:block">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">NOVA</p>
+              <p className="mt-1 text-xs font-medium text-ink">Les signaux à surveiller</p>
             </div>
           </div>
         </div>
@@ -390,6 +357,105 @@ export default function LandingPage() {
                 <p className="text-sm text-muted leading-relaxed">{f.description}</p>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* NOVA — zoom sur les alertes du produit */}
+      <section className="overflow-hidden border-y border-border bg-surface py-20 md:py-28">
+        <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 lg:grid-cols-2 lg:gap-16">
+          <div className="max-w-xl">
+            <Badge variant="info" className="mb-5">NOVA · Intelligence opérationnelle</Badge>
+            <h2 className="font-display text-3xl font-bold leading-tight text-ink md:text-4xl">
+              Les signaux importants ne se perdent plus dans vos chiffres.
+            </h2>
+            <p className="mt-5 text-base leading-relaxed text-muted">
+              NOVA met en évidence les situations qui méritent votre attention : risque de rupture,
+              baisse de marge ou concentration des créances. Les alertes restent proches de vos
+              indicateurs pour vous aider à comprendre où agir.
+            </p>
+            <div className="mt-7 flex flex-wrap gap-2">
+              {["Stock critique", "Marge", "Créances"].map((label) => (
+                <span key={label} className="rounded-full border border-border bg-background px-3 py-1.5 text-xs font-medium text-text">
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="relative mx-auto h-[300px] w-full max-w-[620px] overflow-hidden rounded-[22px] border border-border bg-[#F8F9FC] shadow-[0_24px_60px_-34px_rgba(31,24,86,0.32)] sm:h-[360px]">
+            <Image
+              src="/images/landing/unyvon-dashboard-desktop.png"
+              alt="Détail du tableau de bord UNYVON mettant en regard la performance et le panneau d'alertes NOVA"
+              width={1920}
+              height={1080}
+              sizes="(max-width: 1024px) 100vw, 620px"
+              className="absolute right-[-355px] top-[-56px] h-[440px] w-auto max-w-none sm:right-[-300px] sm:top-[-74px] sm:h-[520px]"
+            />
+            <div className="pointer-events-none absolute inset-y-0 left-0 w-[28%] bg-gradient-to-r from-[#F8F9FC] via-[#F8F9FC]/85 to-transparent" />
+            <div className="pointer-events-none absolute bottom-4 left-4 rounded-full border border-white/80 bg-white/95 px-3 py-2 text-[11px] font-medium text-text shadow-md">
+              Vue du produit · NOVA
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Expérience mobile — mockup fourni avec capture mobile réelle */}
+      <section className="relative overflow-hidden py-20 md:py-28">
+        <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-lavender-soft/80 via-background to-background" />
+        <div className="relative mx-auto grid max-w-7xl items-center gap-10 px-6 md:grid-cols-2 md:gap-16">
+          <div className="order-2 flex justify-center md:order-1">
+            <div className="relative w-full max-w-[500px]">
+              <div aria-hidden="true" className="absolute left-1/2 top-1/2 h-[70%] w-[55%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
+              <div className="relative mx-auto aspect-[4/3] w-full">
+                <Image
+                  src="/images/landing/iphone-17-front.webp"
+                  alt="Mockup frontal d'un iPhone 17"
+                  fill
+                  sizes="(max-width: 768px) 100vw, 500px"
+                  className="object-contain"
+                />
+                <div className="absolute left-[36.1%] top-[12.2%] h-[76.2%] w-[27.1%] overflow-hidden rounded-[16%] bg-white">
+                  <Image
+                    src="/images/landing/unyvon-dashboard-mobile.png"
+                    alt="Vue mobile réelle du tableau de bord UNYVON"
+                    fill
+                    sizes="150px"
+                    className="object-cover object-top"
+                  />
+                </div>
+                <div aria-hidden="true" className="absolute left-[45.6%] top-[13.1%] z-10 h-[3.2%] w-[7.8%] rounded-full bg-black" />
+              </div>
+              <div className="absolute bottom-[7%] right-[4%] hidden rounded-2xl border border-white/80 bg-white/95 px-4 py-3 shadow-xl backdrop-blur sm:block">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">UNYVON</p>
+                <p className="mt-1 text-xs font-medium text-ink">Votre activité, même en déplacement</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="order-1 max-w-xl md:order-2">
+            <Badge variant="info" className="mb-5">Une expérience qui s'adapte à vous</Badge>
+            <h2 className="font-display text-3xl font-bold leading-tight text-ink md:text-4xl">
+              Votre activité reste lisible, même sur petit écran.
+            </h2>
+            <p className="mt-5 text-base leading-relaxed text-muted">
+              Retrouvez vos indicateurs et les informations prioritaires depuis une interface
+              responsive, pensée pour rester claire sur ordinateur, tablette et téléphone.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <Link href="/signup">
+                <Button size="lg">
+                  Commencer gratuitement
+                  <ArrowRight className="h-5 w-5" />
+                </Button>
+              </Link>
+              <Link href="/demo">
+                <Button variant="outline" size="lg">
+                  Explorer la démo
+                  <ChevronRight className="h-5 w-5" />
+                </Button>
+              </Link>
+            </div>
           </div>
         </div>
       </section>
