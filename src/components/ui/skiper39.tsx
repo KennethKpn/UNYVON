@@ -16,33 +16,34 @@ type SpriteRect = {
   height: number;
 };
 
-type Walker = {
-  sprite: SpriteRect | null;
+type Person = {
+  sprite: SpriteRect;
   x: number;
+  y: number;
   width: number;
   height: number;
-  baseline: number;
+  groundY: number;
   speed: number;
   direction: 1 | -1;
-  scale: number;
   phase: number;
   opacity: number;
 };
 
-const DEFAULT_SPRITE_SHEET =
-  "https://cdn.21st.dev/assets/localized/abdb8990a7bef8c2f5af3e45f0a3c969c4b0603fba8be92e81347de4ea4e1ed7.png";
-
-const FALLBACK_COLORS = [
-  "#6556E9",
-  "#344054",
-  "#0C7D49",
-  "#7B6DEB",
-  "#56627A",
-  "#8A6A50",
-];
+const DEFAULT_SPRITE_SHEET = "https://skiper-ui.com/images/peeps/all-peeps.png";
+const FALLBACK_SPRITE_SHEET =
+  "https://s3-us-west-2.amazonaws.com/s.cdpn.io/175711/open-peeps-sheet.png";
 
 const randomBetween = (min: number, max: number) =>
   min + Math.random() * (max - min);
+
+const shuffle = (values: number[]) => {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+};
 
 export function CrowdCanvas({
   src = DEFAULT_SPRITE_SHEET,
@@ -65,7 +66,7 @@ export function CrowdCanvas({
     let stageHeight = 0;
     let pixelRatio = 1;
     let imageReady = false;
-    let spriteFailed = false;
+    let imageFailed = false;
     let isInView = false;
     let pageIsVisible = document.visibilityState === "visible";
     let prefersReducedMotion = window.matchMedia(
@@ -73,159 +74,111 @@ export function CrowdCanvas({
     ).matches;
     let animationFrame = 0;
     let previousTime = 0;
-    let walkers: Walker[] = [];
+    let people: Person[] = [];
     let disposed = false;
+    let sourceIndex = 0;
+    const sources = [...new Set([src, DEFAULT_SPRITE_SHEET, FALLBACK_SPRITE_SHEET])];
 
     const clearCanvas = () => {
       context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
       context.clearRect(0, 0, stageWidth, stageHeight);
     };
 
-    const drawFallbackPerson = (
-      walker: Walker,
-      time: number,
-    ) => {
-      const { width, height, phase } = walker;
-      const centerX = width * 0.5;
-      const headRadius = height * 0.095;
-      const headY = height * 0.17;
-      const shoulderY = height * 0.36;
-      const hipY = height * 0.68;
-      const step = Math.sin(time * 5.2 + phase);
-      const color = FALLBACK_COLORS[
-        Math.abs(Math.floor(phase * 100)) % FALLBACK_COLORS.length
-      ];
-
-      context.fillStyle = "#C98E68";
-      context.beginPath();
-      context.arc(centerX, headY, headRadius, 0, Math.PI * 2);
-      context.fill();
-
-      context.strokeStyle = color;
-      context.lineWidth = Math.max(3, height * 0.12);
-      context.lineCap = "round";
-      context.beginPath();
-      context.moveTo(centerX, shoulderY);
-      context.lineTo(centerX, hipY);
-      context.moveTo(centerX, shoulderY + height * 0.04);
-      context.lineTo(centerX - width * 0.2, height * 0.58 + step * 2);
-      context.moveTo(centerX, shoulderY + height * 0.04);
-      context.lineTo(centerX + width * 0.2, height * 0.58 - step * 2);
-      context.stroke();
-
-      context.strokeStyle = "#344054";
-      context.lineWidth = Math.max(3, height * 0.105);
-      context.beginPath();
-      context.moveTo(centerX, hipY);
-      context.lineTo(centerX - width * 0.13, height * 0.94 + step * 4);
-      context.moveTo(centerX, hipY);
-      context.lineTo(centerX + width * 0.13, height * 0.94 - step * 4);
-      context.stroke();
-    };
-
     const draw = (time: number) => {
-      if (!stageWidth || !stageHeight) return;
+      if (!imageReady || !stageWidth || !stageHeight) return;
 
       clearCanvas();
-      const orderedWalkers = [...walkers].sort(
-        (first, second) => first.baseline - second.baseline,
-      );
 
-      orderedWalkers.forEach((walker) => {
-        const bounce = prefersReducedMotion
-          ? 0
-          : Math.sin(time * 0.0052 + walker.phase) * 1.8;
-        const y = walker.baseline - walker.height + bounce;
+      [...people]
+        .sort((first, second) => first.groundY - second.groundY)
+        .forEach((person) => {
+          const bob = prefersReducedMotion
+            ? 0
+            : Math.sin(time * 0.004 + person.phase) * 1.15;
 
-        context.save();
-        context.globalAlpha = walker.opacity;
+          context.save();
+          context.globalAlpha = person.opacity;
 
-        if (walker.direction === -1) {
-          context.translate(walker.x + walker.width, 0);
-          context.scale(-1, 1);
-        } else {
-          context.translate(walker.x, 0);
-        }
+          if (person.direction === -1) {
+            context.translate(person.x + person.width, person.y + bob);
+            context.scale(-1, 1);
+          } else {
+            context.translate(person.x, person.y + bob);
+          }
 
-        if (walker.sprite && imageReady) {
-          const sprite = walker.sprite;
           context.drawImage(
             image,
-            sprite.x,
-            sprite.y,
-            sprite.width,
-            sprite.height,
+            person.sprite.x,
+            person.sprite.y,
+            person.sprite.width,
+            person.sprite.height,
             0,
-            y,
-            walker.width,
-            walker.height,
+            0,
+            person.width,
+            person.height,
           );
-        } else {
-          context.translate(0, y);
-          drawFallbackPerson(walker, time);
-        }
 
-        context.restore();
-      });
+          context.restore();
+        });
     };
 
-    const makeWalkers = () => {
-      if (!stageWidth || !stageHeight) return;
+    const createCrowd = () => {
+      if (!imageReady || !stageWidth || !stageHeight) return;
 
-      const count =
-        stageWidth < 520 ? 5 : stageWidth < 900 ? 7 : 10;
-      const cellWidth = imageReady ? image.naturalWidth / rows : 1;
-      const cellHeight = imageReady ? image.naturalHeight / cols : 1;
-      const available = Array.from(
-        { length: rows * cols },
-        (_, index) => index,
+      const cellWidth = image.naturalWidth / rows;
+      const cellHeight = image.naturalHeight / cols;
+      const sourceFrames = shuffle(
+        Array.from({ length: rows * cols }, (_, index) => index),
       );
 
-      walkers = Array.from({ length: count }, (_, index) => {
-        const randomPosition = Math.floor(Math.random() * available.length);
-        const spriteIndex = available.splice(randomPosition, 1)[0] ?? 0;
-        const sprite = imageReady
-          ? {
-              x: (spriteIndex % rows) * cellWidth,
-              y: Math.floor(spriteIndex / rows) * cellHeight,
-              width: cellWidth,
-              height: cellHeight,
-            }
-          : null;
-        const scale = randomBetween(0.76, 1);
-        const height = Math.min(stageHeight * 0.64, 96) * scale;
-        const width = imageReady
-          ? height * (cellWidth / cellHeight)
-          : height * 0.42;
+      // Density scales with viewport width: enough people to read as one crowd,
+      // without turning the narrow mobile section into an unreadable black block.
+      const count = Math.max(20, Math.min(74, Math.round(stageWidth / 16)));
+      const slotWidth = stageWidth / count;
+
+      people = Array.from({ length: count }, (_, index) => {
+        const frameIndex = sourceFrames[index % sourceFrames.length];
+        const sprite = {
+          x: (frameIndex % rows) * cellWidth,
+          y: Math.floor(frameIndex / rows) * cellHeight,
+          width: cellWidth,
+          height: cellHeight,
+        };
+
+        const depth = randomBetween(0, 1);
+        const height = stageHeight * (0.48 + depth * 0.36);
+        const width = height * (cellWidth / cellHeight);
+        const groundY = stageHeight * (0.48 + depth * 0.54);
         const direction: 1 | -1 = Math.random() > 0.5 ? 1 : -1;
-        const slot = stageWidth / count;
-        const x = slot * (index + 0.5) + randomBetween(-slot * 0.22, slot * 0.22);
+        const centerX =
+          slotWidth * (index + 0.5) +
+          randomBetween(-slotWidth * 0.42, slotWidth * 0.42);
 
         return {
           sprite,
-          x: x - width / 2,
+          x: centerX - width / 2,
+          y: groundY - height,
           width,
           height,
-          baseline: stageHeight - 19 - (1 - scale) * 16,
-          speed: Math.max(22, stageWidth / randomBetween(19, 27)),
+          groundY,
+          speed: randomBetween(12, 27),
           direction,
-          scale,
           phase: randomBetween(0, Math.PI * 2),
-          opacity: randomBetween(0.76, 0.96),
+          opacity: randomBetween(0.82, 1),
         };
       });
 
       draw(0);
     };
 
-    const resetWalker = (walker: Walker) => {
-      walker.direction = Math.random() > 0.5 ? 1 : -1;
-      walker.x =
-        walker.direction === 1
-          ? -walker.width - randomBetween(12, 90)
-          : stageWidth + randomBetween(12, 90);
-      walker.phase = randomBetween(0, Math.PI * 2);
-      walker.speed = Math.max(22, stageWidth / randomBetween(19, 27));
+    const resetPerson = (person: Person) => {
+      person.direction = Math.random() > 0.5 ? 1 : -1;
+      person.x =
+        person.direction === 1
+          ? -person.width - randomBetween(8, 45)
+          : stageWidth + randomBetween(8, 45);
+      person.speed = randomBetween(12, 27);
+      person.phase = randomBetween(0, Math.PI * 2);
     };
 
     const stopAnimation = () => {
@@ -243,14 +196,14 @@ export function CrowdCanvas({
       const delta = Math.min((time - previousTime) / 1000, 0.05);
       previousTime = time;
 
-      walkers.forEach((walker) => {
-        walker.x += walker.direction * walker.speed * delta;
+      people.forEach((person) => {
+        person.x += person.direction * person.speed * delta;
 
         if (
-          (walker.direction === 1 && walker.x > stageWidth + walker.width) ||
-          (walker.direction === -1 && walker.x < -walker.width)
+          (person.direction === 1 && person.x > stageWidth + person.width) ||
+          (person.direction === -1 && person.x < -person.width)
         ) {
-          resetWalker(walker);
+          resetPerson(person);
         }
       });
 
@@ -259,9 +212,8 @@ export function CrowdCanvas({
     };
 
     const syncAnimation = () => {
-      const canRender = imageReady || spriteFailed;
       const shouldAnimate =
-        canRender &&
+        imageReady &&
         isInView &&
         pageIsVisible &&
         !prefersReducedMotion;
@@ -274,7 +226,7 @@ export function CrowdCanvas({
 
       if (!shouldAnimate) {
         stopAnimation();
-        if (imageReady || spriteFailed) draw(0);
+        if (imageReady) draw(0);
       }
     };
 
@@ -288,7 +240,7 @@ export function CrowdCanvas({
       canvas.width = Math.round(stageWidth * pixelRatio);
       canvas.height = Math.round(stageHeight * pixelRatio);
 
-      makeWalkers();
+      createCrowd();
       syncAnimation();
     };
 
@@ -302,15 +254,6 @@ export function CrowdCanvas({
     );
     const handleMotionChange = (event: MediaQueryListEvent) => {
       prefersReducedMotion = event.matches;
-
-      if (prefersReducedMotion) {
-        walkers.forEach((walker, index) => {
-          const slot = stageWidth / Math.max(walkers.length, 1);
-          walker.x = slot * (index + 0.5) - walker.width / 2;
-          walker.direction = 1;
-        });
-      }
-
       syncAnimation();
       draw(0);
     };
@@ -345,18 +288,29 @@ export function CrowdCanvas({
     image.onload = () => {
       if (disposed) return;
       imageReady = true;
-      makeWalkers();
+      imageFailed = false;
+      resize();
       syncAnimation();
     };
 
     image.onerror = () => {
       if (disposed) return;
-      spriteFailed = true;
-      makeWalkers();
-      syncAnimation();
+
+      sourceIndex += 1;
+      const nextSource = sources[sourceIndex];
+
+      if (nextSource) {
+        image.src = nextSource;
+        return;
+      }
+
+      imageFailed = true;
+      imageReady = false;
+      stopAnimation();
+      clearCanvas();
     };
 
-    image.src = src;
+    image.src = sources[sourceIndex];
 
     if (canvas.getBoundingClientRect().width) resize();
 
