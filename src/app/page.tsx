@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { CrowdCanvas } from "@/components/ui/skiper39";
 
 const features = [
   {
@@ -315,25 +316,40 @@ export default function LandingPage() {
       </section>
 
       {/* How it works */}
-      <section id="how-it-works" className="py-20 md:py-28">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="text-center mb-16">
+      <section
+        id="how-it-works"
+        className="relative overflow-hidden bg-background pt-20 pb-10 md:pt-28 md:pb-12"
+      >
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="mb-16 text-center">
             <Badge className="mb-4">Comment ça marche</Badge>
-            <h2 className="font-display text-3xl md:text-4xl font-bold text-ink">
+            <h2 className="font-display text-3xl font-bold text-ink md:text-4xl">
               Trois étapes. Pas de configuration complexe.
             </h2>
           </div>
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="grid gap-8 md:grid-cols-3">
             {steps.map((s) => (
               <div key={s.step} className="text-center md:text-left">
-                <div className="inline-flex items-center justify-center w-12 h-12 rounded-[12px] bg-lavender-soft text-primary font-display font-bold text-lg mb-4">
+                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-[12px] bg-lavender-soft font-display text-lg font-bold text-primary">
                   {s.step}
                 </div>
-                <h3 className="font-display text-lg font-semibold text-ink mb-2">{s.title}</h3>
-                <p className="text-muted text-sm leading-relaxed">{s.description}</p>
+                <h3 className="mb-2 font-display text-lg font-semibold text-ink">{s.title}</h3>
+                <p className="text-sm leading-relaxed text-muted">{s.description}</p>
               </div>
             ))}
           </div>
+        </div>
+
+        {/* Illustration décorative : foule en mouvement, sur le même fond que la section. */}
+        <div className="relative mx-auto mt-7 h-[132px] w-full max-w-[1600px] sm:h-[148px] md:mt-8 md:h-[168px] lg:h-[180px]">
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-[3%] bottom-[18px] h-px bg-gradient-to-r from-transparent via-primary/15 to-transparent"
+          />
+          <CrowdCanvas className="absolute inset-x-0 top-0 h-[calc(100%-18px)] w-full" />
+          <span className="pointer-events-none absolute bottom-0 right-6 text-[9px] leading-[12px] text-muted/45">
+            Illustrations Open Peeps · Motion adapté de Skiper UI
+          </span>
         </div>
       </section>
 
