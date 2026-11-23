@@ -66,7 +66,6 @@ export function CrowdCanvas({
     let stageHeight = 0;
     let pixelRatio = 1;
     let imageReady = false;
-    let imageFailed = false;
     let isInView = false;
     let pageIsVisible = document.visibilityState === "visible";
     let prefersReducedMotion = window.matchMedia(
@@ -288,7 +287,6 @@ export function CrowdCanvas({
     image.onload = () => {
       if (disposed) return;
       imageReady = true;
-      imageFailed = false;
       resize();
       syncAnimation();
     };
@@ -304,7 +302,6 @@ export function CrowdCanvas({
         return;
       }
 
-      imageFailed = true;
       imageReady = false;
       stopAnimation();
       clearCanvas();
