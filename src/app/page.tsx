@@ -406,40 +406,42 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* Expérience mobile — mockup fourni avec capture mobile réelle */}
+      {/* Expérience mobile — capture réelle dans un mockup iPhone dessiné en CSS */}
       <section className="relative overflow-hidden py-20 md:py-28">
         <div aria-hidden="true" className="absolute inset-0 bg-gradient-to-br from-lavender-soft/80 via-background to-background" />
-        <div className="relative mx-auto grid max-w-7xl items-center gap-10 px-6 md:grid-cols-2 md:gap-16">
+        <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-6 md:grid-cols-2 md:gap-16">
           <div className="order-2 flex justify-center md:order-1">
-            <div className="relative w-full max-w-[500px]">
-              <div aria-hidden="true" className="absolute left-1/2 top-1/2 h-[70%] w-[55%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
-              <div className="relative mx-auto aspect-[4/3] w-full">
-                <Image
-                  src="/images/landing/iphone-17-front.webp"
-                  alt="Mockup frontal d'un iPhone 17"
-                  fill
-                  sizes="(max-width: 768px) 100vw, 500px"
-                  className="object-contain"
-                />
-                <div className="absolute left-[36.1%] top-[12.2%] h-[76.2%] w-[27.1%] overflow-hidden rounded-[16%] bg-white">
-                  <Image
-                    src="/images/landing/unyvon-dashboard-mobile.png"
-                    alt="Vue mobile réelle du tableau de bord UNYVON"
-                    fill
-                    sizes="150px"
-                    className="object-cover object-top"
-                  />
-                  <div aria-hidden="true" className="absolute right-[3.5%] top-[1.2%] z-10 flex h-[5.5%] w-[19.5%] items-center justify-center rounded-full bg-white">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-full bg-lavender-soft text-primary">
-                      <UserRound className="h-4 w-4" />
-                    </span>
+            <div className="relative mx-auto flex w-full max-w-[500px] justify-center py-5 sm:py-0">
+              <div aria-hidden="true" className="absolute left-1/2 top-1/2 h-[68%] w-[66%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
+
+              {/* Boutons latéraux du châssis */}
+              <div aria-hidden="true" className="absolute left-[calc(50%-139px)] top-[19%] z-20 h-8 w-[4px] rounded-l-full bg-gradient-to-r from-[#626874] to-[#C7CBD2] shadow-sm sm:left-[calc(50%-141px)]" />
+              <div aria-hidden="true" className="absolute left-[calc(50%-139px)] top-[26%] z-20 h-12 w-[4px] rounded-l-full bg-gradient-to-r from-[#626874] to-[#C7CBD2] shadow-sm sm:left-[calc(50%-141px)]" />
+              <div aria-hidden="true" className="absolute right-[calc(50%-139px)] top-[24%] z-20 h-16 w-[4px] rounded-r-full bg-gradient-to-l from-[#626874] to-[#C7CBD2] shadow-sm sm:right-[calc(50%-141px)]" />
+
+              {/* Châssis titane, verre noir et écran */}
+              <div className="relative z-10 w-[min(68vw,264px)] rounded-[3.25rem] bg-[linear-gradient(135deg,#F1F3F6_0%,#9EA4AE_5%,#343943_11%,#08090C_17%,#08090C_83%,#5B626D_91%,#E8EAEE_100%)] p-[5px] shadow-[0_34px_70px_-24px_rgba(25,22,56,0.5),0_12px_28px_-14px_rgba(0,0,0,0.5)]">
+                <div className="relative rounded-[2.95rem] border border-white/15 bg-[#07080B] p-[5px]">
+                  <div className="relative aspect-[390/844] overflow-hidden rounded-[2.58rem] bg-white ring-1 ring-black/10">
+                    <Image
+                      src="/images/landing/unyvon-dashboard-mobile.png"
+                      alt="Capture réelle du tableau de bord mobile UNYVON : chiffre d’affaires, marge, encaissements, créances, dépenses, trésorerie et performance"
+                      fill
+                      sizes="(max-width: 768px) 68vw, 264px"
+                      className="object-cover object-top"
+                    />
+                    {/* Îlot dynamique du téléphone */}
+                    <div aria-hidden="true" className="absolute left-1/2 top-[9px] z-20 flex h-[25px] w-[82px] -translate-x-1/2 items-center justify-end rounded-full bg-black px-2 shadow-inner">
+                      <span className="h-2 w-2 rounded-full bg-[#18222D] ring-1 ring-[#344050]/70" />
+                    </div>
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 rounded-[2.58rem] ring-1 ring-inset ring-white/25" />
                   </div>
                 </div>
-                <div aria-hidden="true" className="absolute left-[45.6%] top-[13.1%] z-10 h-[3.2%] w-[7.8%] rounded-full bg-black" />
               </div>
-              <div className="absolute bottom-[7%] right-[4%] hidden rounded-2xl border border-white/80 bg-white/95 px-4 py-3 shadow-xl backdrop-blur sm:block">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-primary">UNYVON</p>
-                <p className="mt-1 text-xs font-medium text-ink">Votre activité, même en déplacement</p>
+
+              <div className="pointer-events-none absolute bottom-[4%] right-[2%] z-20 hidden items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-semibold text-text shadow-xl backdrop-blur sm:flex">
+                <span className="h-2 w-2 rounded-full bg-success" />
+                Aperçu mobile réel
               </div>
             </div>
           </div>
