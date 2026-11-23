@@ -9,11 +9,9 @@ import {
   Brain,
   Shield,
   Zap,
-  TrendingUp,
   Package,
   Users,
   UserRound,
-  AlertTriangle,
   CheckCircle2,
   ChevronRight,
   Star,
@@ -446,7 +444,7 @@ export default function LandingPage() {
           </div>
 
           <div className="order-1 max-w-xl md:order-2">
-            <Badge variant="info" className="mb-5">Une expérience qui s'adapte à vous</Badge>
+            <Badge variant="info" className="mb-5">Une expérience qui s&apos;adapte à vous</Badge>
             <h2 className="font-display text-3xl font-bold leading-tight text-ink md:text-4xl">
               Votre activité reste lisible, même sur petit écran.
             </h2>
