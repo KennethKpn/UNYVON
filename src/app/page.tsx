@@ -271,10 +271,10 @@ export default function LandingPage() {
               </div>
               <div className="overflow-hidden rounded-b-[16px] bg-[#F8F9FC] sm:rounded-b-[18px]">
                 <Image
-                  src="/images/landing/unyvon-dashboard-real.webp"
+                  src="/images/landing/unyvon-dashboard-real.png"
                   alt="Capture du véritable tableau de bord UNYVON avec ses six indicateurs, le graphique de performance et les alertes NOVA"
-                  width={960}
-                  height={407}
+                  width={1920}
+                  height={1080}
                   priority
                   sizes="(max-width: 1280px) 100vw, 1152px"
                   className="block h-auto w-full"
@@ -386,7 +386,7 @@ export default function LandingPage() {
 
           <div className="relative mx-auto h-[300px] w-full max-w-[620px] overflow-hidden rounded-[22px] border border-border bg-[#F8F9FC] shadow-[0_24px_60px_-34px_rgba(31,24,86,0.32)] sm:h-[360px]">
             <Image
-              src="/images/landing/unyvon-dashboard-real.webp"
+              src="/images/landing/unyvon-dashboard-real.png"
               alt="Détail du tableau de bord UNYVON mettant en regard la performance et le panneau d'alertes NOVA"
               width={1920}
               height={1080}
