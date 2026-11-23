@@ -273,7 +273,7 @@ export default function LandingPage() {
                   src="/images/landing/unyvon-dashboard-real.webp"
                   alt="Capture du véritable tableau de bord UNYVON avec ses six indicateurs, le graphique de performance et les alertes NOVA"
                   width={960}
-                  height={433}
+                  height={407}
                   priority
                   sizes="(max-width: 1280px) 100vw, 1152px"
                   className="block h-auto w-full"
