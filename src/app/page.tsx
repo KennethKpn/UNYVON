@@ -270,10 +270,10 @@ export default function LandingPage() {
               </div>
               <div className="overflow-hidden rounded-b-[16px] bg-[#F8F9FC] sm:rounded-b-[18px]">
                 <Image
-                  src="/images/landing/unyvon-dashboard-desktop.png"
+                  src="/images/landing/unyvon-dashboard-real.webp"
                   alt="Capture du véritable tableau de bord UNYVON avec ses six indicateurs, le graphique de performance et les alertes NOVA"
-                  width={1920}
-                  height={1080}
+                  width={960}
+                  height={433}
                   priority
                   sizes="(max-width: 1280px) 100vw, 1152px"
                   className="block h-auto w-full"
@@ -385,12 +385,12 @@ export default function LandingPage() {
 
           <div className="relative mx-auto h-[300px] w-full max-w-[620px] overflow-hidden rounded-[22px] border border-border bg-[#F8F9FC] shadow-[0_24px_60px_-34px_rgba(31,24,86,0.32)] sm:h-[360px]">
             <Image
-              src="/images/landing/unyvon-dashboard-desktop.png"
+              src="/images/landing/unyvon-dashboard-real.webp"
               alt="Détail du tableau de bord UNYVON mettant en regard la performance et le panneau d'alertes NOVA"
               width={1920}
               height={1080}
               sizes="(max-width: 1024px) 100vw, 620px"
-              className="absolute right-[-355px] top-[-56px] h-[440px] w-auto max-w-none sm:right-[-300px] sm:top-[-74px] sm:h-[520px]"
+              className="absolute left-[-340px] top-[-48px] h-[460px] w-auto max-w-none"
             />
             <div className="pointer-events-none absolute inset-y-0 left-0 w-[28%] bg-gradient-to-r from-[#F8F9FC] via-[#F8F9FC]/85 to-transparent" />
             <div className="pointer-events-none absolute bottom-4 left-4 rounded-full border border-white/80 bg-white/95 px-3 py-2 text-[11px] font-medium text-text shadow-md">
