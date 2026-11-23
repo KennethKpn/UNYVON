@@ -346,7 +346,7 @@ export default function LandingPage() {
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-[3%] bottom-[18px] h-px bg-gradient-to-r from-transparent via-primary/15 to-transparent"
           />
-          <CrowdCanvas className="absolute inset-x-0 top-0 h-[calc(100%-18px)] w-full" />
+          <CrowdCanvas className="absolute inset-x-0 top-0 h-[calc(100%_-_18px)] w-full" />
           <span className="pointer-events-none absolute bottom-0 right-6 text-[9px] leading-[12px] text-muted/45">
             Illustrations Open Peeps · Motion adapté de Skiper UI
           </span>
