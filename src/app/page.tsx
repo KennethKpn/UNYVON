@@ -269,7 +269,7 @@ export default function LandingPage() {
                 </div>
                 <span className="hidden shrink-0 text-[10px] font-medium text-muted sm:block">Aperçu du produit</span>
               </div>
-              <div className="overflow-hidden rounded-b-[16px] bg-[#F8F9FC] sm:rounded-b-[18px]">
+              <div className="relative overflow-hidden rounded-b-[16px] bg-[#F8F9FC] sm:rounded-b-[18px]">
                 <Image
                   src="/images/landing/unyvon-dashboard-real.png"
                   alt="Capture du véritable tableau de bord UNYVON avec ses six indicateurs, le graphique de performance et les alertes NOVA"
@@ -279,6 +279,11 @@ export default function LandingPage() {
                   sizes="(max-width: 1280px) 100vw, 1152px"
                   className="block h-auto w-full"
                 />
+                <div aria-hidden="true" className="absolute right-[0.4%] top-[0.5%] z-10 flex h-[5.5%] w-[10%] items-center justify-center bg-white">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-lavender-soft text-primary">
+                    <UserRound className="h-4 w-4" />
+                  </span>
+                </div>
               </div>
             </div>
             <div className="pointer-events-none absolute -bottom-5 left-5 hidden items-center gap-2 rounded-full border border-white/80 bg-white/95 px-4 py-2.5 text-xs font-medium text-text shadow-lg backdrop-blur sm:flex">
