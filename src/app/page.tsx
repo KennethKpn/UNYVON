@@ -318,7 +318,7 @@ export default function LandingPage() {
       {/* How it works */}
       <section
         id="how-it-works"
-        className="relative overflow-hidden bg-background pt-20 pb-10 md:pt-28 md:pb-12"
+        className="relative overflow-hidden bg-background pt-20 pb-8 md:pt-28 md:pb-9"
       >
         <div className="mx-auto max-w-7xl px-6">
           <div className="mb-16 text-center">
@@ -341,7 +341,7 @@ export default function LandingPage() {
         </div>
 
         {/* Illustration décorative : foule en mouvement, sur le même fond que la section. */}
-        <div className="relative mx-auto mt-7 h-[132px] w-full max-w-[1600px] sm:h-[148px] md:mt-8 md:h-[168px] lg:h-[180px]">
+        <div className="relative mx-auto mt-6 h-[112px] w-full max-w-[1600px] sm:h-[124px] md:mt-7 md:h-[138px] lg:h-[148px]">
           <div
             aria-hidden="true"
             className="pointer-events-none absolute inset-x-[3%] bottom-[18px] h-px bg-gradient-to-r from-transparent via-primary/15 to-transparent"
