@@ -414,13 +414,12 @@ export default function LandingPage() {
             <div className="relative mx-auto flex w-full max-w-[500px] justify-center py-5 sm:py-0">
               <div aria-hidden="true" className="absolute left-1/2 top-1/2 h-[68%] w-[66%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-primary/15 blur-3xl" />
 
-              {/* Boutons latéraux du châssis */}
-              <div aria-hidden="true" className="absolute left-[calc(50%-139px)] top-[19%] z-20 h-8 w-[4px] rounded-l-full bg-gradient-to-r from-[#626874] to-[#C7CBD2] shadow-sm sm:left-[calc(50%-141px)]" />
-              <div aria-hidden="true" className="absolute left-[calc(50%-139px)] top-[26%] z-20 h-12 w-[4px] rounded-l-full bg-gradient-to-r from-[#626874] to-[#C7CBD2] shadow-sm sm:left-[calc(50%-141px)]" />
-              <div aria-hidden="true" className="absolute right-[calc(50%-139px)] top-[24%] z-20 h-16 w-[4px] rounded-r-full bg-gradient-to-l from-[#626874] to-[#C7CBD2] shadow-sm sm:right-[calc(50%-141px)]" />
-
               {/* Châssis titane, verre noir et écran */}
               <div className="relative z-10 w-[min(68vw,264px)] rounded-[3.25rem] bg-[linear-gradient(135deg,#F1F3F6_0%,#9EA4AE_5%,#343943_11%,#08090C_17%,#08090C_83%,#5B626D_91%,#E8EAEE_100%)] p-[5px] shadow-[0_34px_70px_-24px_rgba(25,22,56,0.5),0_12px_28px_-14px_rgba(0,0,0,0.5)]">
+                {/* Boutons latéraux du châssis */}
+                <div aria-hidden="true" className="absolute -left-[3px] top-[19%] z-20 h-8 w-[4px] rounded-l-full bg-gradient-to-r from-[#626874] to-[#C7CBD2] shadow-sm" />
+                <div aria-hidden="true" className="absolute -left-[3px] top-[26%] z-20 h-12 w-[4px] rounded-l-full bg-gradient-to-r from-[#626874] to-[#C7CBD2] shadow-sm" />
+                <div aria-hidden="true" className="absolute -right-[3px] top-[24%] z-20 h-16 w-[4px] rounded-r-full bg-gradient-to-l from-[#626874] to-[#C7CBD2] shadow-sm" />
                 <div className="relative rounded-[2.95rem] border border-white/15 bg-[#07080B] p-[5px]">
                   <div className="relative aspect-[390/844] overflow-hidden rounded-[2.58rem] bg-white ring-1 ring-black/10">
                     <Image
