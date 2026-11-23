@@ -161,8 +161,8 @@ export function CrowdCanvas({
             walker.height,
           );
         } else {
-          drawFallbackPerson(walker, time);
           context.translate(0, y);
+          drawFallbackPerson(walker, time);
         }
 
         context.restore();
@@ -331,6 +331,7 @@ export function CrowdCanvas({
         : null;
 
     intersectionObserver?.observe(canvas);
+    isInView = intersectionObserver === null;
     resizeObserver?.observe(canvas);
 
     if (!resizeObserver) {
