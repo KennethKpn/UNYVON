@@ -259,8 +259,9 @@ export function CrowdCanvas({
     };
 
     const syncAnimation = () => {
+      const canRender = imageReady || spriteFailed;
       const shouldAnimate =
-        imageReady &&
+        canRender &&
         isInView &&
         pageIsVisible &&
         !prefersReducedMotion;
